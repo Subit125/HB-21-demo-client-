@@ -1,0 +1,83 @@
+﻿diff --git a/src/App.jsx b/src/App.jsx
+index 8dd9bb0..7db9201 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -781,7 +781,7 @@ const BoardPage = ({ leaderboard = [], profile, currentDay }) => {
+   );
+ };
+ 
+-const TeamPage = ({ profile, leaderboard = [], clan, onLogoUpdate }) => {
++const TeamPage = ({ profile, leaderboard = [], clan }) => {
+   const myTeamName = profile?.team_name || 'Independent';
+   const teamMembers = leaderboard.filter(u => u.team_name === myTeamName);
+   const totalTeamPoints = teamMembers.reduce((acc, curr) => acc + (curr.points || 0), 0);
+@@ -818,25 +818,6 @@ const TeamPage = ({ profile, leaderboard = [], clan, onLogoUpdate }) => {
+             >
+               {!clan?.logo_url && <Users size={32} color="var(--accent)" opacity={0.3} />}
+             </div>
+-            {profile?.role === 'captain' && (
+-                <>
+-                    <button 
+-                        onClick={() => document.getElementById('clan-logo-input').click()}
+-                        style={{ position: 'absolute', bottom: '-8px', right: '-8px', background: 'var(--accent)', color: 'white', border: 'none', width: '36px', height: '36px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 8px 16px rgba(159, 64, 34, 0.4)', transition: 'transform 0.2s' }}
+-                        onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.1)'}
+-                        onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}
+-                    >
+-                        <Camera size={18} />
+-                    </button>
+-                    <input 
+-                        id="clan-logo-input"
+-                        type="file" 
+-                        style={{ display: 'none' }} 
+-                        accept="image/*"
+-                        onChange={(e) => onLogoUpdate(e.target.files[0])}
+-                    />
+-                </>
+-            )}
+         </div>
+         <div>
+             <h1 style={{ fontSize: '32px', fontFamily: 'var(--font-heading)', marginBottom: '4px' }}>{myTeamName}</h1>
+@@ -1713,34 +1694,6 @@ export default function App() {
+     }
+   };
+ 
+-  const handleUpdateClanLogo = async (file) => {
+-      if (!profile?.team_name || profile.team_name === 'Independent') return;
+-      setIsSaving(true);
+-      try {
+-          let fileToUpload = file;
+-          // Compression
+-          const options = { maxSizeMB: 0.08, maxWidthOrHeight: 800, useWebWorker: true };
+-          fileToUpload = await imageCompression(file, options);
+-
+-          const uniqueId = Math.random().toString(36).substring(7);
+-          const fName = `clans/${profile.team_name.replace(/\s+/g, '-')}-${Date.now()}-${uniqueId}`;
+-          const { error: uE } = await supabase.storage.from('avatars').upload(fName, fileToUpload, { upsert: true });
+-          if (uE) throw uE;
+-
+-          const fUrl = supabase.storage.from('avatars').getPublicUrl(fName).data.publicUrl;
+-          const { error } = await supabase.from('clans').update({ logo_url: fUrl }).eq('name', profile.team_name);
+-          if (error) throw error;
+-
+-          setClan(prev => ({ ...prev, logo_url: fUrl }));
+-          setSuccessMessage('Clan logo updated!');
+-          fetchData();
+-      } catch (e) {
+-          console.error('Clan logo update failed:', e);
+-          alert(`Update Failed: ${e.message}`);
+-      }
+-      setIsSaving(false);
+-      setTimeout(() => setSuccessMessage(''), 3000);
+-  };
+ 
+   if (isInitializing) {
+     return (
+@@ -2062,7 +2015,7 @@ export default function App() {
+             onFlashcardAction={handleFlashcardAction}
+           />}
+           {page === 'board' && <BoardPage key="board" leaderboard={leaderboard} profile={profile} currentDay={currentDay} />}
+-          {page === 'team' && <TeamPage key="team" profile={profile} leaderboard={leaderboard} clan={clan} onLogoUpdate={handleUpdateClanLogo} />}
++          {page === 'team' && <TeamPage key="team" profile={profile} leaderboard={leaderboard} clan={clan} />}
+           {page === 'captain-dashboard' && <CaptainDashboard key="captain" profile={profile} leaderboard={leaderboard} />}
+           {page === 'profile' && <ProfilePage key="profile" profile={profile} onUpdate={handleUpdateProfile} onLogout={handleLogout} />}
+         </AnimatePresence>
