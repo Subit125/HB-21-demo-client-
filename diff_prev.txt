@@ -1,0 +1,149 @@
+﻿diff --git a/src/App.jsx b/src/App.jsx
+index bf7e3fe..82e463c 100644
+--- a/src/App.jsx
++++ b/src/App.jsx
+@@ -781,7 +781,7 @@ const BoardPage = ({ leaderboard = [], profile, currentDay }) => {
+   );
+ };
+ 
+-const TeamPage = ({ profile, leaderboard = [] }) => {
++const TeamPage = ({ profile, leaderboard = [], clan, onLogoUpdate }) => {
+   const myTeamName = profile?.team_name || 'Independent';
+   const teamMembers = leaderboard.filter(u => u.team_name === myTeamName);
+   const totalTeamPoints = teamMembers.reduce((acc, curr) => acc + (curr.points || 0), 0);
+@@ -798,9 +798,48 @@ const TeamPage = ({ profile, leaderboard = [] }) => {
+ 
+   return (
+     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="page-container">
+-      <div style={{ marginBottom: '40px' }}>
+-        <h1 style={{ fontSize: '32px', fontFamily: 'var(--font-heading)', marginBottom: '8px' }}>{myTeamName}</h1>
+-        <p style={{ color: 'var(--text-secondary)', fontSize: '15px' }}>Your team needs you. No weak links.</p>
++      <div style={{ marginBottom: '40px', display: 'flex', alignItems: 'center', gap: '20px' }}>
++        <div style={{ position: 'relative' }}>
++            <div 
++              style={{ 
++                width: '80px', 
++                height: '80px', 
++                background: 'var(--card-bg)', 
++                borderRadius: '16px', 
++                display: 'flex', 
++                alignItems: 'center', 
++                justifyContent: 'center', 
++                boxShadow: '0 10px 25px rgba(83, 55, 43, 0.1)',
++                overflow: 'hidden',
++                backgroundSize: 'cover',
++                backgroundPosition: 'center',
++                backgroundImage: clan?.logo_url ? `url(${clan.logo_url})` : 'none'
++              }}
++            >
++              {!clan?.logo_url && <Users size={32} color="var(--accent)" opacity={0.3} />}
++            </div>
++            {profile?.role === 'captain' && (
++                <>
++                    <button 
++                        onClick={() => document.getElementById('clan-logo-input').click()}
++                        style={{ position: 'absolute', bottom: '-5px', right: '-5px', background: 'var(--accent)', color: 'white', border: 'none', width: '28px', height: '28px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', boxShadow: '0 4px 10px rgba(0,0,0,0.1)' }}
++                    >
++                        <Camera size={14} />
++                    </button>
++                    <input 
++                        id="clan-logo-input"
++                        type="file" 
++                        style={{ display: 'none' }} 
++                        accept="image/*"
++                        onChange={(e) => onLogoUpdate(e.target.files[0])}
++                    />
++                </>
++            )}
++        </div>
++        <div>
++            <h1 style={{ fontSize: '32px', fontFamily: 'var(--font-heading)', marginBottom: '4px' }}>{myTeamName}</h1>
++            <p style={{ color: 'var(--text-secondary)', fontSize: '15px', margin: 0 }}>Your team needs you. No weak links.</p>
++        </div>
+       </div>
+ 
+       <div className="team-stats-grid">
+@@ -1248,6 +1287,7 @@ export default function App() {
+   const [flashCards, setFlashCards] = useState([]);
+   const [leaderboard, setLeaderboard] = useState([]);
+   const [profile, setProfile] = useState(null);
++  const [clan, setClan] = useState(null);
+   const [currentDay, setCurrentDay] = useState(1);
+   const [selectedDay, setSelectedDay] = useState(1);
+   const [activeAlert, setActiveAlert] = useState(null);
+@@ -1427,6 +1467,7 @@ export default function App() {
+ 
+       if (!profileData.email) await supabase.from('profiles').update({ email: user.email }).eq('id', user.id);
+       setProfile({ ...profileData, email: user.email });
++      fetchClanData(profileData.team_name);
+     } else {
+       // New User logic: Check domain before creating profile
+       if (user.email?.toLowerCase().endsWith('@hbplus.fit')) {
+@@ -1445,10 +1486,22 @@ export default function App() {
+         is_allowed: true,
+         created_at: new Date().toISOString()
+       }]).select().single();
+-      if (nP) setProfile(nP);
++      if (nP) {
++        setProfile(nP);
++        fetchClanData('Independent');
++      }
+     }
+   };
+ 
++  const fetchClanData = async (teamName) => {
++    if (!teamName || teamName === 'Independent') {
++        setClan(null);
++        return;
++    }
++    const { data } = await supabase.from('clans').select('*').eq('name', teamName).single();
++    if (data) setClan(data);
++  };
++
+   const handleFlashcardAction = async (cardId, action) => {
+     console.log('Action Triggered:', action, cardId);
+     if (!session?.user) return;
+@@ -1658,6 +1711,34 @@ export default function App() {
+     }
+   };
+ 
++  const handleUpdateClanLogo = async (file) => {
++      if (!profile?.team_name || profile.team_name === 'Independent') return;
++      setIsSaving(true);
++      try {
++          let fileToUpload = file;
++          // Compression
++          const options = { maxSizeMB: 0.08, maxWidthOrHeight: 800, useWebWorker: true };
++          fileToUpload = await imageCompression(file, options);
++
++          const fName = `clans/${profile.team_name}-${Date.now()}`;
++          const { error: uE } = await supabase.storage.from('proofs').upload(fName, fileToUpload);
++          if (uE) throw uE;
++
++          const fUrl = supabase.storage.from('proofs').getPublicUrl(fName).data.publicUrl;
++          const { error } = await supabase.from('clans').update({ logo_url: fUrl }).eq('name', profile.team_name);
++          if (error) throw error;
++
++          setClan(prev => ({ ...prev, logo_url: fUrl }));
++          setSuccessMessage('Clan logo updated!');
++          fetchData();
++      } catch (e) {
++          console.error('Clan logo update failed:', e);
++          alert(`Update Failed: ${e.message}`);
++      }
++      setIsSaving(false);
++      setTimeout(() => setSuccessMessage(''), 3000);
++  };
++
+   if (isInitializing) {
+     return (
+       <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--hb-cream)', gap: '24px' }}>
+@@ -1978,7 +2059,7 @@ export default function App() {
+             onFlashcardAction={handleFlashcardAction}
+           />}
+           {page === 'board' && <BoardPage key="board" leaderboard={leaderboard} profile={profile} currentDay={currentDay} />}
+-          {page === 'team' && <TeamPage key="team" profile={profile} leaderboard={leaderboard} />}
++          {page === 'team' && <TeamPage key="team" profile={profile} leaderboard={leaderboard} clan={clan} onLogoUpdate={handleUpdateClanLogo} />}
+           {page === 'captain-dashboard' && <CaptainDashboard key="captain" profile={profile} leaderboard={leaderboard} />}
+           {page === 'profile' && <ProfilePage key="profile" profile={profile} onUpdate={handleUpdateProfile} onLogout={handleLogout} />}
+         </AnimatePresence>
