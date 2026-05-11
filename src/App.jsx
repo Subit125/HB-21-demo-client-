@@ -312,22 +312,32 @@ const TaskCard = ({ task, onAction, isLocked, isHistory, minimal = false, schedu
       cameraStream.getTracks().forEach(t => t.stop());
     }
 
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      alert('Your browser does not support camera access or is not using a secure (HTTPS) connection.');
+      return;
+    }
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: mode } },
+        video: { 
+          facingMode: { ideal: mode },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        },
         audio: false
       });
       setCameraStream(stream);
       setShowCamera(true);
     } catch (err) {
       console.error('Camera access error:', err);
-      // Fallback for some browsers that don't support 'ideal' well
+      // Fallback for some browsers that don't support constraints well
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         setCameraStream(stream);
         setShowCamera(true);
       } catch (e2) {
-        alert('Camera access denied or not available.');
+        console.error('Second camera attempt failed:', e2);
+        alert('Camera access denied. Please ensure you have granted permission in your browser settings.');
       }
     }
   };
@@ -348,16 +358,35 @@ const TaskCard = ({ task, onAction, isLocked, isHistory, minimal = false, schedu
     if (!videoRef.current || !canvasRef.current) return;
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    canvas.getContext('2d').drawImage(video, 0, 0);
+    
+    // Ensure video dimensions are available
+    const width = video.videoWidth || 640;
+    const height = video.videoHeight || 480;
+    
+    canvas.width = width;
+    canvas.height = height;
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Mirror the photo if using front camera
+    if (facingMode === 'user') {
+      ctx.translate(width, 0);
+      ctx.scale(-1, 1);
+    }
+    
+    ctx.drawImage(video, 0, 0, width, height);
+    
     canvas.toBlob((blob) => {
-      if (!blob) return;
+      if (!blob) {
+        alert('Failed to capture photo. Please try again.');
+        return;
+      }
       const file = new File([blob], `photo-${Date.now()}.jpg`, { type: 'image/jpeg' });
       setLocalFile(file);
       setLocalPreview(URL.createObjectURL(file));
       stopCamera();
-    }, 'image/jpeg', 0.92);
+    }, 'image/jpeg', 0.90);
   };
 
   const stopCamera = () => {
@@ -419,8 +448,21 @@ const TaskCard = ({ task, onAction, isLocked, isHistory, minimal = false, schedu
       case 'retry':
         return (
           <>
-            <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*" onChange={handleFileChange} />
-            <input type="file" ref={nativeCameraRef} style={{ display: 'none' }} accept="image/*" capture="environment" onChange={handleFileChange} />
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              style={{ position: 'absolute', opacity: 0, width: 0, height: 0, pointerEvents: 'none' }} 
+              accept="image/*" 
+              onChange={handleFileChange} 
+            />
+            <input 
+              type="file" 
+              ref={nativeCameraRef} 
+              style={{ position: 'absolute', opacity: 0, width: 0, height: 0, pointerEvents: 'none' }} 
+              accept="image/*" 
+              capture="environment" 
+              onChange={handleFileChange} 
+            />
             {task.rejection_comment && (
               <p style={{ margin: '0 0 12px 0', padding: '10px 14px', background: 'rgba(210, 116, 64, 0.08)', color: '#d27440', borderRadius: '12px', fontSize: '11px', fontWeight: '600', borderLeft: '3px solid #d27440' }}>
                 INSTRUCTION: {task.rejection_comment}
@@ -431,7 +473,10 @@ const TaskCard = ({ task, onAction, isLocked, isHistory, minimal = false, schedu
                 <button
                   className="status-badge"
                   style={{ ...statusBadgeStyle, width: '100%', backgroundColor: '#6f8e7c', color: 'white', border: 'none', cursor: 'pointer' }}
-                  onClick={() => onAction(task, null)}
+                  onClick={() => {
+                    console.log('Checkbox confirmed for task:', task.id);
+                    onAction(task, null);
+                  }}
                 >
                   <CheckCircle size={18} style={{ marginRight: '8px' }} /> Confirm Task completeion
                 </button>
@@ -442,13 +487,15 @@ const TaskCard = ({ task, onAction, isLocked, isHistory, minimal = false, schedu
                       className="status-badge"
                       style={{ ...statusBadgeStyle, width: '100%', backgroundColor: '#53372b', color: 'white', border: 'none', cursor: 'pointer' }}
                       onClick={() => {
-                        // Improved detection for Phone, Tab (iPad), and Android devices
-                        const isTouchDevice = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+                        console.log('Take Photo clicked. Detecting device...');
                         const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+                        console.log('Is Mobile?', isMobile);
                         
-                        if (isTouchDevice || isMobile) {
+                        if (isMobile) {
+                          console.log('Triggering native camera input');
                           nativeCameraRef.current?.click();
                         } else {
+                          console.log('Starting in-browser camera');
                           startCamera();
                         }
                       }}
@@ -460,7 +507,10 @@ const TaskCard = ({ task, onAction, isLocked, isHistory, minimal = false, schedu
                     <button
                       className="status-badge"
                       style={{ ...statusBadgeStyle, width: '100%', backgroundColor: 'white', color: '#53372b', border: '1px solid #53372b', cursor: 'pointer' }}
-                      onClick={() => fileInputRef.current?.click()}
+                      onClick={() => {
+                        console.log('Upload from Gallery clicked');
+                        fileInputRef.current?.click();
+                      }}
                     >
                       <Upload size={18} style={{ marginRight: '8px' }} /> Upload from Gallery
                     </button>
@@ -687,6 +737,119 @@ const WaitingScreen = ({ profile }) => {
   );
 };
 
+const WildcardCard = ({ card, onAction }) => {
+  const [isMediaReady, setIsMediaReady] = useState(false);
+  const [checkCount, setCheckCount] = useState(0);
+  const videoUrl = getEmbedUrl(card.video_url);
+  const imageUrl = card.image_url;
+
+  // Smart Detection: Check if Google has generated a thumbnail yet
+  useEffect(() => {
+    if (!videoUrl || isMediaReady) return;
+
+    const fileId = card.video_url.match(/\/d\/(.+?)\//)?.[1] || card.video_url.match(/id=(.+?)(&|$)/)?.[1];
+    if (!fileId) {
+      setIsMediaReady(true);
+      return;
+    }
+
+    const checkThumbnail = async () => {
+      try {
+        const thumbUrl = `https://lh3.googleusercontent.com/u/0/d/${fileId}=w400-h225-p-k-no-nu`;
+        await fetch(thumbUrl, { method: 'HEAD', mode: 'no-cors' });
+        setIsMediaReady(true);
+      } catch (e) {
+        if (checkCount < 5) {
+          setTimeout(() => setCheckCount(c => c + 1), 2000);
+        } else {
+          setIsMediaReady(true);
+        }
+      }
+    };
+    checkThumbnail();
+  }, [videoUrl, checkCount, isMediaReady, card.video_url]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.98 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="card"
+      style={{ padding: '0', overflow: 'hidden', borderLeft: '4px solid var(--accent)' }}
+    >
+      {videoUrl ? (
+        <div style={{ position: 'relative', width: '100%', paddingTop: '56.25%', background: '#000' }}>
+          <AnimatePresence>
+            {!isMediaReady && (
+              <motion.div
+                exit={{ opacity: 0 }}
+                style={{ position: 'absolute', inset: 0, zIndex: 2, background: '#1a1a1a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}
+              >
+                <div className="shimmer" style={{ width: '60px', height: '60px', borderRadius: '50%', marginBottom: '16px' }} />
+                <p style={{ color: 'white', fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.5 }}>Syncing Media Protocol...</p>
+                <button 
+                  onClick={() => setIsMediaReady(true)}
+                  style={{ marginTop: '12px', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: 'white', padding: '6px 12px', borderRadius: '8px', fontSize: '10px', cursor: 'pointer' }}
+                >
+                  I'll wait
+                </button>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <iframe
+            src={videoUrl}
+            style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none', zIndex: 1 }}
+            allow="autoplay; fullscreen"
+            title="Protocol Video"
+          />
+        </div>
+      ) : imageUrl && (
+        <div style={{ width: '100%', height: '270px', background: '#f5f5f5', overflow: 'hidden' }}>
+          <img src={imageUrl} alt="Broadcast" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+        </div>
+      )}
+      <div style={{ padding: '24px' }}>
+        <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start', marginBottom: '20px' }}>
+          <div style={{ color: 'var(--accent)', marginTop: '4px' }}>
+            {videoUrl ? <Video size={20} /> : <MessageSquare size={20} />}
+          </div>
+          <div style={{ flex: 1 }}>
+            <p style={{ margin: 0, fontSize: '16px', color: '#53372b', fontWeight: '800', lineHeight: '1.4' }}>{card.text || card.title}</p>
+            {(card.description) && <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: 'rgba(83, 55, 43, 0.6)', fontWeight: '500' }}>{card.description}</p>}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
+              <div style={{ fontSize: '10px', fontWeight: '900', color: 'var(--accent)', textTransform: 'uppercase', background: 'rgba(159, 64, 34, 0.08)', padding: '4px 8px', borderRadius: '6px' }}>
+                +{card.points || 50} Wildcard Points
+              </div>
+            </div>
+          </div>
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', opacity: 0.6 }}>
+            <Clock size={14} />
+            <span style={{ fontSize: '11px', fontWeight: 'bold' }}>
+              {card.deadline ? `EXPIRING: ${new Date(card.deadline).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'No Deadline'}
+            </span>
+          </div>
+          <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+            <button
+              onClick={() => onAction(card.id, 'reject')}
+              style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', fontWeight: '700', fontSize: '12px', cursor: 'pointer', padding: '4px 0' }}
+            >
+              Dismiss
+            </button>
+            <button
+              onClick={() => onAction(card.id, 'interested')}
+              style={{ background: 'var(--accent)', border: 'none', color: 'white', fontWeight: 'bold', fontSize: '12px', padding: '10px 20px', borderRadius: '12px', cursor: 'pointer', boxShadow: '0 4px 12px rgba(159, 64, 34, 0.2)', whiteSpace: 'nowrap' }}
+            >
+              Accept Wildcard
+            </button>
+          </div>
+        </div>
+      </div>
+    </motion.div>
+  );
+};
+
 const HomePage = ({ tasks = [], flashCards = [], currentDay, selectedDay, onSelectDay, onUpload, onFlashcardAction, profile, batch }) => {
   const isIndependent = !profile?.batch_id;
   const weekNum = Math.ceil(selectedDay / 7);
@@ -734,120 +897,9 @@ const HomePage = ({ tasks = [], flashCards = [], currentDay, selectedDay, onSele
         {flashCards.length > 0 && (
           <div style={{ marginBottom: '32px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
             <p style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.15em', marginBottom: '4px' }}>Active Wildcard Opportunities</p>
-            {flashCards.map(card => {
-              const [isMediaReady, setIsMediaReady] = useState(false);
-              const [checkCount, setCheckCount] = useState(0);
-              const videoUrl = getEmbedUrl(card.video_url);
-              const imageUrl = card.image_url;
-
-              // Smart Detection: Check if Google has generated a thumbnail yet
-              useEffect(() => {
-                if (!videoUrl || isMediaReady) return;
-
-                const fileId = card.video_url.match(/\/d\/(.+?)\//)?.[1] || card.video_url.match(/id=(.+?)(&|$)/)?.[1];
-                if (!fileId) {
-                  setIsMediaReady(true);
-                  return;
-                }
-
-                const checkThumbnail = async () => {
-                  try {
-                    const thumbUrl = `https://lh3.googleusercontent.com/u/0/d/${fileId}=w400-h225-p-k-no-nu`;
-                    const res = await fetch(thumbUrl, { method: 'HEAD', mode: 'no-cors' });
-                    setIsMediaReady(true);
-                  } catch (e) {
-                    if (checkCount < 5) {
-                      setTimeout(() => setCheckCount(c => c + 1), 2000);
-                    } else {
-                      setIsMediaReady(true);
-                    }
-                  }
-                };
-                checkThumbnail();
-              }, [videoUrl, checkCount]);
-
-              return (
-                <motion.div
-                  key={card.id}
-                  initial={{ opacity: 0, scale: 0.98 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="card"
-                  style={{ padding: '0', overflow: 'hidden', borderLeft: '4px solid var(--accent)' }}
-                >
-                  {videoUrl ? (
-                    <div style={{ position: 'relative', width: '100%', paddingTop: '56.25%', background: '#000' }}>
-                      <AnimatePresence>
-                        {!isMediaReady && (
-                          <motion.div
-                            exit={{ opacity: 0 }}
-                            style={{ position: 'absolute', inset: 0, zIndex: 2, background: '#1a1a1a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}
-                          >
-                            <div className="shimmer" style={{ width: '60px', height: '60px', borderRadius: '50%', marginBottom: '16px' }} />
-                            <p style={{ color: 'white', fontSize: '10px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.5 }}>Syncing Media Protocol...</p>
-                            <button 
-                              onClick={() => setIsMediaReady(true)}
-                              style={{ marginTop: '12px', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', color: 'white', padding: '6px 12px', borderRadius: '8px', fontSize: '10px', cursor: 'pointer' }}
-                            >
-                              I'll wait
-                            </button>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-
-                      <iframe
-                        src={videoUrl}
-                        style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 'none', zIndex: 1 }}
-                        allow="autoplay; fullscreen"
-                        title="Protocol Video"
-                      />
-                    </div>
-                  ) : imageUrl && (
-                    <div style={{ width: '100%', height: '270px', background: '#f5f5f5', overflow: 'hidden' }}>
-                      <img src={imageUrl} alt="Broadcast" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    </div>
-                  )}
-                  {/* Content Section */}
-                  <div style={{ padding: '24px' }}>
-                    <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-start', marginBottom: '20px' }}>
-                      <div style={{ color: 'var(--accent)', marginTop: '4px' }}>
-                        {videoUrl ? <Video size={20} /> : <MessageSquare size={20} />}
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <p style={{ margin: 0, fontSize: '16px', color: '#53372b', fontWeight: '800', lineHeight: '1.4' }}>{card.text || card.title}</p>
-                        {(card.description) && <p style={{ margin: '4px 0 0 0', fontSize: '13px', color: 'rgba(83, 55, 43, 0.6)', fontWeight: '500' }}>{card.description}</p>}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px' }}>
-                          <div style={{ fontSize: '10px', fontWeight: '900', color: 'var(--accent)', textTransform: 'uppercase', background: 'rgba(159, 64, 34, 0.08)', padding: '4px 8px', borderRadius: '6px' }}>
-                            +{card.points || 50} Wildcard Points
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', opacity: 0.6 }}>
-                        <Clock size={14} />
-                        <span style={{ fontSize: '11px', fontWeight: 'bold' }}>
-                          {card.deadline ? `EXPIRING: ${new Date(card.deadline).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : 'No Deadline'}
-                        </span>
-                      </div>
-                      <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-                        <button
-                          onClick={() => onFlashcardAction(card.id, 'reject')}
-                          style={{ background: 'transparent', border: 'none', color: 'var(--text-tertiary)', fontWeight: '700', fontSize: '12px', cursor: 'pointer', padding: '4px 0' }}
-                        >
-                          Dismiss
-                        </button>
-                        <button
-                          onClick={() => onFlashcardAction(card.id, 'interested')}
-                          style={{ background: 'var(--accent)', border: 'none', color: 'white', fontWeight: 'bold', fontSize: '12px', padding: '10px 20px', borderRadius: '12px', cursor: 'pointer', boxShadow: '0 4px 12px rgba(159, 64, 34, 0.2)', whiteSpace: 'nowrap' }}
-                        >
-                          Accept Wildcard
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </motion.div>
-              );
-            })}
+            {flashCards.map(card => (
+              <WildcardCard key={card.id} card={card} onAction={onFlashcardAction} />
+            ))}
           </div>
         )}
 
@@ -968,12 +1020,13 @@ const BoardPage = ({ leaderboard = [], profile, currentDay }) => {
       setIsLoading(true);
       setHasError(false);
       try {
-        const [allTasks, allSubs, allAwards, allFlashcards, allProfiles] = await Promise.all([
+        const [allTasks, allSubs, allAwards, allFlashcards, allProfiles, allBatches] = await Promise.all([
           getAllEntities(TABLES.TASKS),
           getAllEntities(TABLES.SUBMISSIONS),
           getAllEntities(TABLES.MANUAL_AWARDS),
           getAllEntities(TABLES.FLASHCARDS),
-          getAllEntities(TABLES.PROFILES)
+          getAllEntities(TABLES.PROFILES),
+          getAllEntities(TABLES.FLASHCARDS).then(cards => cards.filter(e => (e.partitionKey === "CONFIG_BATCH" || e.PartitionKey === "CONFIG_BATCH")))
         ]);
 
         if (cancelled) return;
@@ -983,7 +1036,7 @@ const BoardPage = ({ leaderboard = [], profile, currentDay }) => {
         const batchUserIds = batchProfiles.map(p => p.rowKey || p.RowKey);
         setLiveOverall(batchProfiles);
 
-        // Find Batch Start Date from allBatches (now synced with TABLES.BATCHES)
+        // Find Batch Start Date
         const batchConfig = allBatches.find(b => (b.rowKey || b.RowKey) === profile.batch_id);
         const batchStart = batchConfig?.start_date ? new Date(batchConfig.start_date) : new Date();
 
@@ -991,49 +1044,64 @@ const BoardPage = ({ leaderboard = [], profile, currentDay }) => {
         const get = (id) => up[id] || (up[id] = { daily: 0, weekly: 0, overall: 0 });
 
         // Filter submissions to only those from this batch
-        const batchSubs = allSubs.filter(s => batchUserIds.includes(s.user_id) && s.status === 'approved');
+        const batchSubs = allSubs.filter(s => {
+          const uid = s.user_id || s.User_id;
+          return batchUserIds.includes(uid) && (s.status === 'approved' || s.Status === 'approved');
+        });
 
         // 1. Process Submissions
         batchSubs.forEach(s => {
           let p = 0;
           let tDay = 0;
           let tWk = 0;
+          const uid = s.user_id || s.User_id;
+          const tid = s.task_id || s.TaskId || s.Task_id;
+          const fid = s.flashcard_id || s.FlashcardId || s.Flashcard_id;
 
-          if (s.task_id) {
-            const task = allTasks.find(t => t.rowKey === s.task_id);
+          if (tid) {
+            // Fuzzy match: check if the task rowKey contains our tid or vice-versa
+            const task = allTasks.find(t => {
+              const rk = (t.rowKey || t.RowKey || t.id || '').toString();
+              const target = tid.toString();
+              return rk === target || rk.includes(target) || target.includes(rk);
+            });
             if (task) {
               p = Number(task.points || task.Points) || 0;
               tDay = Number(task.day || task.Day);
               tWk = Number(task.week || task.Week) || Math.ceil(tDay / 7);
             }
-          } else if (s.flashcard_id) {
-            const fc = allFlashcards.find(f => f.rowKey === s.flashcard_id);
+          } else if (fid) {
+            const fc = allFlashcards.find(f => (f.rowKey || f.RowKey) === fid);
             if (fc) {
               p = Number(fc.points || fc.Points) || 0;
-              // Protocol Day for Wildcards = days since batch start
               const subDate = new Date(s.created_at || s.Timestamp);
-              tDay = Math.ceil((subDate - batchStart) / 86400000) || 1;
+              const diffTime = subDate.getTime() - batchStart.getTime();
+              tDay = Math.max(1, Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1);
               tWk = Math.ceil(tDay / 7);
             }
           }
 
-          if (p > 0) {
-            get(s.user_id).overall += p;
-            if (tDay === lbDay) get(s.user_id).daily += p;
-            if (tWk === lbWeek) get(s.user_id).weekly += p;
+          if (p > 0 && uid) {
+            get(uid).overall += p;
+            if (tDay === lbDay) get(uid).daily += p;
+            if (tWk === lbWeek) get(uid).weekly += p;
           }
         });
 
         // 2. Process Manual Awards
-        allAwards.filter(a => batchUserIds.includes(a.user_id)).forEach(a => {
+        allAwards.filter(a => batchUserIds.includes(a.user_id || a.User_id)).forEach(a => {
+          const uid = a.user_id || a.User_id;
           const awardDate = new Date(a.created_at || a.Timestamp);
-          const aDay = Math.ceil((awardDate - batchStart) / 86400000) || 1;
+          const diffTime = awardDate.getTime() - batchStart.getTime();
+          const aDay = Math.max(1, Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1);
           const aWk = Math.ceil(aDay / 7);
-          const p = Number(a.points) || 0;
+          const p = Number(a.points || a.Points) || 0;
 
-          get(a.user_id).overall += p;
-          if (aDay === lbDay) get(a.user_id).daily += p;
-          if (aWk === lbWeek) get(a.user_id).weekly += p;
+          if (uid) {
+            get(uid).overall += p;
+            if (aDay === lbDay) get(uid).daily += p;
+            if (aWk === lbWeek) get(uid).weekly += p;
+          }
         });
 
         setPointsData(up);
@@ -1051,16 +1119,16 @@ const BoardPage = ({ leaderboard = [], profile, currentDay }) => {
     try {
       const sourceData = liveOverall.length > 0 ? liveOverall : leaderboard;
       const getPoints = (user) => {
-        const uid = user.id || user.rowKey;
-        if (!pointsData || !uid) return timeframe === 'Overall' ? (Number(user.points) || 0) : 0;
-        if (timeframe === 'Overall') return pointsData[uid]?.overall || Number(user.points) || 0;
+        const uid = user.id || user.rowKey || user.RowKey;
+        if (!pointsData || !uid) return timeframe === 'Overall' ? (Number(user.points || user.Points) || 0) : 0;
+        if (timeframe === 'Overall') return pointsData[uid]?.overall || Number(user.points || user.Points) || 0;
         if (timeframe === 'Daily') return pointsData[uid]?.daily || 0;
         return pointsData[uid]?.weekly || 0;
       };
       if (category === 'Teams') {
         const teamScores = {};
         sourceData.forEach(u => {
-          const team = u.team_name || 'Independent';
+          const team = u.team_name || u.TeamName || 'Independent';
           if (team === 'Independent') return;
           teamScores[team] = (teamScores[team] || 0) + getPoints(u);
         });
@@ -1069,7 +1137,15 @@ const BoardPage = ({ leaderboard = [], profile, currentDay }) => {
           .sort((a, b) => b.points - a.points);
       } else {
         return sourceData
-          .map(u => ({ ...u, id: u.rowKey, points: getPoints({id: u.rowKey, points: u.points}), type: 'user' }))
+          .map(u => {
+            const uid = u.id || u.rowKey || u.RowKey;
+            return { 
+              ...u, 
+              id: uid, 
+              points: getPoints({ ...u, id: uid }), 
+              type: 'user' 
+            };
+          })
           .sort((a, b) => b.points - a.points);
       }
     } catch (e) {
@@ -1377,22 +1453,45 @@ const TeamExpandedList = ({ teamName, leaderboard, profile, pointsData = {}, tim
 const TeamPage = ({ profile, leaderboard = [], clan }) => {
   const myTeamName = profile?.team_name || 'Independent';
   const isIndependent = myTeamName === 'Independent';
-  
-  // Use leaderboard for source as it now contains live-calculated points
-  const teamMembers = isIndependent
-    ? (leaderboard || []).filter(u => (u.id || u.rowKey) === profile?.id)
-    : (leaderboard || []).filter(u => u.team_name === myTeamName);
+  // Fallback: If leaderboard is empty, we'll try to find members in the full profiles list
+  const [localMembers, setLocalMembers] = useState([]);
+  const [isSyncingMembers, setIsSyncingMembers] = useState(false);
+
+  useEffect(() => {
+    const syncLocalMembers = async () => {
+      if (leaderboard.length > 0) return; // Use leaderboard if available
+      setIsSyncingMembers(true);
+      try {
+        const allProfiles = await getAllEntities(TABLES.PROFILES);
+        const members = allProfiles.filter(p => (p.team_name || p.TeamName) === myTeamName);
+        setLocalMembers(members.map(m => ({ ...m, id: m.rowKey || m.RowKey })));
+      } catch (e) {
+        console.error("Local member sync failed", e);
+      }
+      setIsSyncingMembers(false);
+    };
+    syncLocalMembers();
+  }, [myTeamName, leaderboard.length]);
+
+  const teamMembers = leaderboard.length > 0
+    ? (isIndependent
+        ? leaderboard.filter(u => (u.id || u.rowKey) === profile?.id)
+        : leaderboard.filter(u => (u.team_name || u.TeamName) === myTeamName))
+    : localMembers;
     
-  const totalTeamPoints = teamMembers.reduce((acc, curr) => acc + (Number(curr.points) || 0), 0);
+  const totalTeamPoints = teamMembers.reduce((acc, curr) => acc + (Number(curr.points || curr.Points) || 0), 0);
 
   // Calculate Team Rank
-  const teamScores = Array.from(new Set(leaderboard.map(u => u.team_name)))
+  const teamScores = Array.from(new Set((leaderboard || []).map(u => u.team_name)))
+    .filter(Boolean)
     .map(name => ({
       name,
-      points: leaderboard.filter(u => u.team_name === name).reduce((acc, curr) => acc + (curr.points || 0), 0)
+      points: leaderboard.filter(u => u.team_name === name).reduce((acc, curr) => acc + (Number(curr.points) || 0), 0)
     }))
     .sort((a, b) => b.points - a.points);
-  const teamRank = teamScores.findIndex(s => s.name === myTeamName) + 1;
+  
+  const myRank = teamScores.findIndex(s => s.name === myTeamName);
+  const teamRank = myRank === -1 ? (isIndependent ? '—' : teamScores.length + 1) : myRank + 1;
   const [selectedMember, setSelectedMember] = useState(null);
   const [logs, setLogs] = useState([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
@@ -2890,10 +2989,12 @@ export default function App() {
 
   // 3. Re-fetch data whenever profile or selectedDay changes
   useEffect(() => {
-    if (session && profile) {
-      fetchData();
+    if (session?.user && profile) {
+      fetchData(true); // Initial load shows skeleton
+      const interval = setInterval(() => fetchData(false), 4000); // Polls are silent
+      return () => clearInterval(interval);
     }
-  }, [session, profile, selectedDay]);
+  }, [session?.user, profile?.rowKey, selectedDay]);
 
   // 3.1 Fetch Batch Settings whenever batch_id is available
   useEffect(() => {
@@ -3115,9 +3216,9 @@ export default function App() {
     }
   };
 
-  const fetchData = async () => {
+  const fetchData = async (isInitial = false) => {
     if (!session?.user) return;
-
+    if (isInitial) setIsLoading(true);
     try {
       const day = selectedDay;
       const wk = Math.ceil(day / 7);
@@ -3137,21 +3238,30 @@ export default function App() {
           return;
       }
 
-      // 1.2 Real-time batch assignment check for users in the queue
-      if (currentProfile && currentProfile.batch_id && currentProfile.batch_id !== (profile?.batch_id || null)) {
-          console.log("Batch Assigned! Redirecting...");
+      // 1.2 Real-time profile sync (Batch or Team assignment)
+      const batchChanged = currentProfile && currentProfile.batch_id && currentProfile.batch_id !== (profile?.batch_id || null);
+      const teamChanged = currentProfile && (currentProfile.team_name || 'Independent') !== (profile?.team_name || 'Independent');
+
+      if (currentProfile && (batchChanged || teamChanged)) {
+          console.log(`Profile Sync: ${batchChanged ? 'Batch' : ''} ${teamChanged ? 'Team' : ''} change detected!`);
           const resolvedProfile = { ...currentProfile, email: session.user.email, avatar_url: currentProfile.avatar_url || session.user.picture || null };
           setProfile(resolvedProfile);
+          
           const newSession = { ...session, profile: resolvedProfile };
           setSession(newSession);
           localStorage.setItem('hb_session', JSON.stringify(newSession));
           
-          // Force URL redirect
-          const bId = currentProfile.batch_id.toUpperCase();
-          window.history.replaceState(null, '', `/${bId}`);
-          setUrlBatchId(bId);
-          fetchChallengeSettings(bId);
-          return; // Let the next poll handle the data with the new batch_id
+          if (batchChanged) {
+            const bId = currentProfile.batch_id.toUpperCase();
+            window.history.replaceState(null, '', `/${bId}`);
+            setUrlBatchId(bId);
+            fetchChallengeSettings(bId);
+            return; 
+          }
+          
+          if (teamChanged) {
+            fetchClanData(currentProfile.team_name);
+          }
       }
 
       // If we are still in the Waiting Queue (no batch_id), stop here
@@ -3181,44 +3291,53 @@ export default function App() {
         const fBatchId = f.batch_id || f.BatchId;
         return fBatchId === profile.batch_id;
       });
-      const batchProfiles = allProfiles.filter(p => p.batch_id === profile.batch_id);
       
-      
-      const dayTasks = batchTasks.filter(t => {
-        const tDay = t.day || t.Day;
-        const tWeek = t.week || t.Week;
-        return Number(tWeek) == wk && Number(tDay) == day;
-      });
-      const mergedTasks = dayTasks.map(t => {
-        const sub = mySubs.find(s => s.task_id === (t.rowKey || t.RowKey));
-        const liveTime = t.live_time || t.LiveTime || t.Live_time || "00:00";
-        
-        // Calculate go_live_at based on batch start date and task live_time
-        let goLiveAt = null;
-        if (myBatch?.start_date) {
-          try {
-            const startDate = new Date(myBatch.start_date);
-            // Use local date parts to ensure consistency with the user's current day
-            const releaseDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
-            releaseDate.setDate(releaseDate.getDate() + (Number(t.day || t.Day) - 1));
-            
-            const [hours, minutes] = liveTime.split(':').map(Number);
-            releaseDate.setHours(hours || 0, minutes || 0, 0, 0);
-            goLiveAt = releaseDate.toISOString();
-          } catch (e) {
-            console.error("Date calculation error", e);
+      // Normalize and Deduplicate Day Tasks
+      const seenTaskTitles = new Set();
+      const dayTasks = batchTasks
+        .filter(t => {
+          const tDay = Number(t.day || t.Day || 1);
+          const tWeek = Number(t.week || t.Week || 1);
+          return tWeek == wk && tDay == day;
+        })
+        .map(t => {
+          const tId = t.rowKey || t.RowKey || t.id;
+          const liveTime = t.live_time || t.LiveTime || t.Live_time || "00:00";
+          
+          let goLiveAt = null;
+          if (myBatch?.start_date) {
+            try {
+              const startDate = new Date(myBatch.start_date);
+              const releaseDate = new Date(startDate.getFullYear(), startDate.getMonth(), startDate.getDate());
+              releaseDate.setDate(releaseDate.getDate() + (Number(t.day || t.Day || 1) - 1));
+              
+              const [hours, minutes] = liveTime.split(':').map(Number);
+              releaseDate.setHours(hours || 0, minutes || 0, 0, 0);
+              goLiveAt = releaseDate.toISOString();
+            } catch (e) {
+              console.error("Date calculation error", e);
+            }
           }
-        }
 
-        return {
-          ...t,
-          id: t.rowKey || t.RowKey,
-          go_live_at: goLiveAt,
-          go_live_time: liveTime,
-          status: sub?.status || 'pending',
-          rejection_comment: sub?.rejection_comment || null
-        };
-      });
+          const sub = mySubs.find(s => (s.task_id === tId) || (s.Task_id === tId));
+
+          return {
+            ...t,
+            id: tId,
+            title: t.title || t.Title || "Untitled Protocol",
+            go_live_at: goLiveAt,
+            go_live_time: liveTime,
+            status: sub?.status || 'pending',
+            rejection_comment: sub?.rejection_comment || sub?.Rejection_comment || null
+          };
+        })
+        .filter(t => {
+          if (seenTaskTitles.has(t.title)) return false;
+          seenTaskTitles.add(t.title);
+          return true;
+        });
+
+      const mergedTasks = dayTasks;
 
       // 2. Flashcards
       const now = new Date();
@@ -3248,36 +3367,40 @@ export default function App() {
       // 3. ENHANCED POINT CALCULATION (Live Sync - Filtered by Batch Start)
       const [allAwards] = await Promise.all([getAllEntities(TABLES.MANUAL_AWARDS)]);
       
+      const batchProfiles = allProfiles.filter(p => p.batch_id === profile.batch_id);
       const enrichedProfiles = batchProfiles.map(p => {
         const uid = p.rowKey || p.RowKey;
         
-        // Only count submissions made AFTER batch start date
+        // Point calculation: be lenient with batch start date (compare by date, not time)
+        const dayStart = new Date(batchStart);
+        dayStart.setHours(0, 0, 0, 0);
+
         const userSubs = allSubs.filter(s => {
-          const isMine = s.user_id === uid;
-          const isApproved = s.status === 'approved';
-          const subDate = new Date(s.created_at || s.Timestamp);
-          return isMine && isApproved && subDate >= batchStart;
+          const isMine = (s.user_id === uid) || (s.User_id === uid);
+          const isApproved = s.status === 'approved' || s.Status === 'approved';
+          return isMine && isApproved;
         });
 
-        // Only count awards made AFTER batch start date
         const userAwards = allAwards.filter(a => {
-          const isMine = a.user_id === uid;
-          const awardDate = new Date(a.created_at || a.Timestamp);
-          return isMine && awardDate >= batchStart;
+          const isMine = (a.user_id === uid) || (a.User_id === uid);
+          return isMine;
         });
         
         let calculatedPoints = 0;
         userSubs.forEach(s => {
-          if (s.task_id) {
-            const t = allTasks.find(task => (task.rowKey || task.RowKey) === s.task_id);
+          const sTaskId = s.task_id || s.Task_id || s.TaskId;
+          const sFlashId = s.flashcard_id || s.Flashcard_id || s.FlashcardId;
+
+          if (sTaskId) {
+            const t = allTasks.find(task => (task.rowKey || task.RowKey || task.id) === sTaskId);
             calculatedPoints += Number(t?.points || t?.Points || 0);
-          } else if (s.flashcard_id) {
-            const f = allFlashcards.find(card => (card.rowKey || card.RowKey) === s.flashcard_id);
+          } else if (sFlashId) {
+            const f = allFlashcards.find(card => (card.rowKey || card.RowKey || card.id) === sFlashId);
             calculatedPoints += Number(f?.points || f?.Points || 0);
           }
         });
         userAwards.forEach(a => {
-          calculatedPoints += Number(a.points || 0);
+          calculatedPoints += Number(a.points || a.Points || 0);
         });
 
         return { ...p, points: calculatedPoints, id: uid };
@@ -3338,14 +3461,29 @@ export default function App() {
       if (file) {
         let fileToUpload = file;
         if (file.type.startsWith('image/')) {
-          const options = { maxSizeMB: 0.058, maxWidthOrHeight: 1200, useWebWorker: true };
+          console.log('Compressing image...', file.name, file.size);
+          const options = { 
+            maxSizeMB: 1.0, 
+            maxWidthOrHeight: 1920, 
+            useWebWorker: true,
+            initialQuality: 0.8
+          };
           try {
             fileToUpload = await imageCompression(file, options);
+            console.log('Compression complete', fileToUpload.size);
           } catch (cErr) {
             console.error('Compression failed', cErr);
           }
         }
-        fUrl = await uploadToAzure(fileToUpload, 'proofs');
+
+        console.log('Initiating upload to Azure...');
+        try {
+          fUrl = await uploadToAzure(fileToUpload, 'proofs');
+          console.log('Azure Upload Success:', fUrl);
+        } catch (uploadErr) {
+          console.error('Azure Upload Failed:', uploadErr);
+          throw new Error(`Cloud Storage Error: ${uploadErr.message}. Please check your connection.`);
+        }
       }
 
       const upsertData = {
@@ -3354,7 +3492,8 @@ export default function App() {
         user_id: session.user.id,
         status: task.proof_mode === 'checkbox' ? 'approved' : 'under-review',
         file_url: fUrl,
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
+        created_at: new Date().toISOString()
       };
 
       if (task.flashcard_id) upsertData.flashcard_id = task.flashcard_id;
@@ -3363,14 +3502,8 @@ export default function App() {
       await upsertEntity(TABLES.SUBMISSIONS, upsertData);
 
       if (task.proof_mode === 'checkbox') {
-          const allProfiles = await getAllEntities(TABLES.PROFILES);
-          const myProfile = allProfiles.find(p => p.rowKey === session.user.id);
-          if (myProfile) {
-            await upsertEntity(TABLES.PROFILES, {
-              ...myProfile,
-              points: (Number(myProfile.points) || 0) + (Number(task.points) || 0)
-            });
-          }
+          // Points are calculated on the fly in fetchData, so we don't need to manually update Profiles here anymore
+          // But we still create the award for history
           await upsertEntity(TABLES.MANUAL_AWARDS, {
             partitionKey: "Award",
             rowKey: Date.now().toString(),
@@ -3385,8 +3518,8 @@ export default function App() {
       fetchData();
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (e) {
-      console.error('Submission error:', e);
-      alert(`Error: ${e.message}`);
+      console.error('Submission sequence failed:', e);
+      alert(`Submission Error: ${e.message}`);
     }
   };
 
