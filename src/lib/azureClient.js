@@ -25,12 +25,14 @@ export { containerClient };
  * @returns {Promise<string>} The URL of the uploaded file
  */
 export const uploadToAzure = async (file, folder = 'proofs') => {
-  const blobName = `${folder}/${Date.now()}-${file.name}`;
+  const blobName = `${folder}/${Date.now()}-${file.name || 'image.jpg'}`;
   const blockBlobClient = containerClient.getBlockBlobClient(blobName);
   
   await blockBlobClient.uploadData(file, {
     blobHTTPHeaders: { blobContentType: file.type }
   });
   
-  return blockBlobClient.url;
+  // Return the production URL with SAS token so it works on all devices and panels
+  const prodUrl = `https://${accountName}.blob.core.windows.net/${containerName}/${blobName}?${sasToken}`;
+  return prodUrl;
 };
