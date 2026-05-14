@@ -113,6 +113,10 @@ const globalStyles = `
     0% { background-position: -200% 0; }
     100% { background-position: 200% 0; }
   }
+  @keyframes storyFill {
+    from { width: 0% }
+    to   { width: 100% }
+  }
   .shimmer {
     background: linear-gradient(90deg, #f5f2e9 25%, #eeebe1 50%, #f5f2e9 75%);
     background-size: 200% 100%;
@@ -850,10 +854,12 @@ const WildcardCard = ({ card, onAction }) => {
   );
 };
 
-const HomePage = ({ tasks = [], flashCards = [], currentDay, selectedDay, onSelectDay, onUpload, onFlashcardAction, profile, batch }) => {
+const HomePage = ({ tasks = [], flashCards = [], currentDay, selectedDay, onSelectDay, onUpload, onFlashcardAction, profile, batch, feedPosts = [] }) => {
   const isIndependent = !profile?.batch_id;
   const weekNum = Math.ceil(selectedDay / 7);
   const weekTitles = ["Foundation", "Commitment", "Ascension", "Mastery"];
+  const [storyIdx, setStoryIdx] = useState(null);
+  const [storyPaused, setStoryPaused] = useState(false);
 
   const isHistory = selectedDay < currentDay;
   const isLocked = selectedDay > currentDay;
@@ -862,8 +868,150 @@ const HomePage = ({ tasks = [], flashCards = [], currentDay, selectedDay, onSele
     return <WaitingScreen profile={profile} />;
   }
 
+  const storyPost = storyIdx !== null ? feedPosts[storyIdx] : null;
+  const hoursLeft = (post) => {
+    const pub = new Date(post.feed_published_at || post.processed_at || post.created_at);
+    return Math.max(0, Math.ceil((pub.getTime() + 24 * 60 * 60 * 1000 - Date.now()) / 3600000));
+  };
+  const advanceStory = () => {
+    setStoryIdx(i => {
+      if (i === null) return null;
+      return i < feedPosts.length - 1 ? i + 1 : null;
+    });
+  };
+
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="page-container">
+
+      {/* Stories Strip */}
+      {feedPosts.length > 0 && (
+        <div style={{ marginBottom: '32px' }}>
+          <div style={{ overflowX: 'auto', paddingBottom: '8px', scrollbarWidth: 'none' }}>
+            <div style={{ display: 'flex', gap: '18px', paddingBottom: '4px', width: 'max-content' }}>
+              {feedPosts.map((post, idx) => (
+                <div
+                  key={post.id}
+                  onClick={() => setStoryIdx(idx)}
+                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', userSelect: 'none' }}
+                >
+                  <div style={{
+                    width: '66px', height: '66px', borderRadius: '50%', flexShrink: 0,
+                    background: 'linear-gradient(135deg, #9f4022 0%, #c99d5d 60%, #d27440 100%)',
+                    padding: '2.5px'
+                  }}>
+                    <div style={{ width: '100%', height: '100%', borderRadius: '50%', border: '2.5px solid #fcfaf5', overflow: 'hidden', background: '#f0ebe3' }}>
+                      {post.file_url && !isVideoUrl(post.file_url) ? (
+                        <img src={post.file_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      ) : (
+                        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '900', fontSize: '22px', color: '#9f4022' }}>
+                          {(post.prof?.name || '?')[0].toUpperCase()}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: '10px', color: '#53372b', fontWeight: '700', maxWidth: '66px', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {post.prof?.name?.split(' ')[0] || 'Member'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Story Viewer */}
+      <AnimatePresence>
+        {storyPost && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 9500, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setStoryIdx(null)}
+              style={{ position: 'absolute', inset: 0, background: 'rgba(15,10,8,0.96)', backdropFilter: 'blur(12px)' }}
+            />
+            <motion.div initial={{ scale: 0.94, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.94, opacity: 0 }}
+              style={{ position: 'relative', width: '100%', maxWidth: '380px', borderRadius: '20px', overflow: 'hidden', background: '#1a1009' }}
+              onMouseDown={() => setStoryPaused(true)}
+              onMouseUp={() => setStoryPaused(false)}
+              onTouchStart={() => setStoryPaused(true)}
+              onTouchEnd={() => setStoryPaused(false)}
+            >
+              {/* Progress bars */}
+              <div style={{ position: 'absolute', top: '14px', left: '12px', right: '12px', display: 'flex', gap: '4px', zIndex: 10 }}>
+                {feedPosts.map((_, i) => (
+                  <div key={i} style={{ flex: 1, height: '2.5px', borderRadius: '2px', background: 'rgba(255,255,255,0.28)', overflow: 'hidden' }}>
+                    {i < storyIdx && (
+                      <div style={{ width: '100%', height: '100%', background: 'white', borderRadius: '2px' }} />
+                    )}
+                    {i === storyIdx && (
+                      <div
+                        key={`fill-${storyIdx}`}
+                        onAnimationEnd={advanceStory}
+                        style={{
+                          height: '100%',
+                          background: 'white',
+                          borderRadius: '2px',
+                          animation: 'storyFill 5s linear forwards',
+                          animationPlayState: storyPaused ? 'paused' : 'running',
+                        }}
+                      />
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Media */}
+              <div style={{ minHeight: '480px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'black' }}>
+                {storyPost.file_url ? (
+                  isVideoUrl(storyPost.file_url)
+                    ? <video key={storyPost.id} src={storyPost.file_url} autoPlay style={{ maxWidth: '100%', maxHeight: '70vh', objectFit: 'contain' }} />
+                    : <img key={storyPost.id} src={storyPost.file_url} alt="" style={{ maxWidth: '100%', maxHeight: '70vh', objectFit: 'contain' }} />
+                ) : (
+                  <div style={{ width: '120px', height: '120px', borderRadius: '50%', background: '#9f4022', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '48px', color: 'white', fontWeight: '900' }}>
+                    {(storyPost.prof?.name || '?')[0].toUpperCase()}
+                  </div>
+                )}
+              </div>
+
+              {/* User info bar */}
+              <div style={{ padding: '16px 20px', background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                  <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#9f4022', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: '900', fontSize: '14px', flexShrink: 0 }}>
+                    {(storyPost.prof?.name || '?')[0].toUpperCase()}
+                  </div>
+                  <div>
+                    <p style={{ margin: 0, fontSize: '13px', fontWeight: '800', color: 'white' }}>{storyPost.prof?.name}</p>
+                    <p style={{ margin: 0, fontSize: '10px', color: 'rgba(255,255,255,0.5)', fontWeight: '600', textTransform: 'uppercase' }}>
+                      {storyPost.prof?.team_name || 'Independent'} · {hoursLeft(storyPost)}h left
+                    </p>
+                  </div>
+                </div>
+                <p style={{ margin: 0, fontSize: '12px', color: 'rgba(255,255,255,0.75)', fontWeight: '600' }}>
+                  {storyPost.task?.title || storyPost.card?.text || 'Submission'}
+                  {storyPost.task?.points ? ` · +${storyPost.task.points} pts` : ''}
+                </p>
+              </div>
+
+              {/* Prev tap zone */}
+              <div
+                style={{ position: 'absolute', top: 0, left: 0, width: '35%', height: '85%', cursor: 'pointer', zIndex: 5 }}
+                onClick={(e) => { e.stopPropagation(); setStoryIdx(i => Math.max(0, i - 1)); }}
+              />
+              {/* Next tap zone */}
+              <div
+                style={{ position: 'absolute', top: 0, right: 0, width: '35%', height: '85%', cursor: 'pointer', zIndex: 5 }}
+                onClick={(e) => { e.stopPropagation(); advanceStory(); }}
+              />
+
+              {/* Close */}
+              <button onClick={() => setStoryIdx(null)}
+                style={{ position: 'absolute', top: '14px', right: '14px', background: 'rgba(0,0,0,0.45)', border: 'none', color: 'white', borderRadius: '50%', width: '30px', height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 11 }}
+              >
+                <X size={14} />
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Header Section */}
       <div style={{ textAlign: 'center', marginBottom: '40px' }}>
         <h2 style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '2px', color: 'var(--accent)', fontWeight: '800', marginBottom: '8px' }}>Week {weekNum} — {weekTitles[weekNum - 1]}</h2>
@@ -2807,6 +2955,151 @@ const GoogleSignInSection = ({ isGsiReady, onSignIn }) => {
 };
 
 
+const isVideoUrl = (url) => /\.(mp4|webm|ogg|mov)$/i.test(url);
+
+const FeedPage = ({ profile }) => {
+  const [posts, setPosts] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [selected, setSelected] = useState(null);
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [allSubs, allProfiles, allTasks, allCards] = await Promise.all([
+          getAllEntities(TABLES.SUBMISSIONS),
+          getAllEntities(TABLES.PROFILES),
+          getAllEntities(TABLES.TASKS),
+          getAllEntities(TABLES.FLASHCARDS),
+        ]);
+
+        const batchId = profile?.batch_id;
+        const result = (allSubs || [])
+          .filter(s => s.status === 'approved' && (s.published_to_feed === true || s.published_to_feed === 'true'))
+          .map(s => {
+            const sId = s.rowKey || s.RowKey || s.id;
+            const prof = (allProfiles || []).find(p => (p.rowKey || p.RowKey || p.id) === s.user_id);
+            if (prof?.batch_id !== batchId) return null;
+            const task = (allTasks || []).find(t => (t.rowKey || t.RowKey || t.id) === s.task_id);
+            const card = (allCards || []).find(c => (c.rowKey || c.RowKey || c.id) === s.flashcard_id);
+            return { ...s, id: sId, prof, task, card };
+          })
+          .filter(Boolean)
+          .sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+
+        setPosts(result);
+      } catch (e) {
+        console.error('FeedPage load error:', e);
+      }
+      setIsLoading(false);
+    };
+    load();
+  }, [profile?.batch_id]);
+
+  if (isLoading) return (
+    <div className="page-container" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
+      <RefreshCw size={28} className="animate-spin" style={{ color: '#9f4022', opacity: 0.5 }} />
+    </div>
+  );
+
+  return (
+    <motion.div
+      key="feed"
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0 }}
+      className="page-container"
+    >
+      <h1 className="section-title" style={{ marginBottom: '8px' }}>Batch Feed</h1>
+      <p style={{ fontSize: '13px', color: 'rgba(83,55,43,0.45)', fontWeight: '600', marginBottom: '32px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+        {posts.length} post{posts.length !== 1 ? 's' : ''} · visible only to your batch
+      </p>
+
+      {posts.length === 0 ? (
+        <div style={{ textAlign: 'center', padding: '80px 24px', color: 'rgba(83,55,43,0.35)' }}>
+          <Instagram size={48} style={{ marginBottom: '16px', opacity: 0.2 }} />
+          <p style={{ margin: 0, fontSize: '14px', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.08em' }}>No posts yet</p>
+          <p style={{ margin: '8px 0 0', fontSize: '13px' }}>Completed tasks will appear here once published by your coach</p>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: '12px' }}>
+          {posts.map(post => (
+            <motion.div
+              key={post.id}
+              whileHover={{ scale: 1.03 }}
+              onClick={() => setSelected(post)}
+              style={{ borderRadius: '14px', overflow: 'hidden', background: 'white', boxShadow: '0 2px 8px rgba(83,55,43,0.08)', cursor: 'pointer', border: '1px solid rgba(83,55,43,0.06)' }}
+            >
+              <div style={{ height: '160px', background: 'rgba(83,55,43,0.04)', overflow: 'hidden', position: 'relative' }}>
+                {post.file_url ? (
+                  isVideoUrl(post.file_url)
+                    ? <video src={post.file_url} muted style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    : <img src={post.file_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: 0.2 }}>
+                    <Instagram size={28} />
+                  </div>
+                )}
+              </div>
+              <div style={{ padding: '10px 12px' }}>
+                <p style={{ margin: 0, fontSize: '12px', fontWeight: '800', color: '#53372b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {post.prof?.name || 'Member'}
+                </p>
+                <p style={{ margin: '2px 0 0', fontSize: '10px', color: 'rgba(83,55,43,0.4)', fontWeight: '600', textTransform: 'uppercase', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {post.task?.title || post.card?.text || 'Submission'}
+                </p>
+              </div>
+            </motion.div>
+          ))}
+        </div>
+      )}
+
+      <AnimatePresence>
+        {selected && (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 9000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+              onClick={() => setSelected(null)}
+              style={{ position: 'absolute', inset: 0, background: 'rgba(23,15,12,0.92)', backdropFilter: 'blur(10px)' }}
+            />
+            <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+              style={{ position: 'relative', borderRadius: '20px', overflow: 'hidden', background: 'white', width: '100%', maxWidth: '480px' }}
+            >
+              <div style={{ background: 'black', minHeight: '300px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {selected.file_url && (
+                  isVideoUrl(selected.file_url)
+                    ? <video src={selected.file_url} controls style={{ maxWidth: '100%', maxHeight: '60vh' }} />
+                    : <img src={selected.file_url} alt="" style={{ maxWidth: '100%', maxHeight: '60vh', objectFit: 'contain' }} />
+                )}
+              </div>
+              <div style={{ padding: '20px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
+                  <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#9f4022', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: '800', fontSize: '14px', flexShrink: 0 }}>
+                    {(selected.prof?.name || '?')[0].toUpperCase()}
+                  </div>
+                  <div>
+                    <p style={{ margin: 0, fontSize: '14px', fontWeight: '800', color: '#53372b' }}>{selected.prof?.name}</p>
+                    <p style={{ margin: 0, fontSize: '11px', color: 'rgba(83,55,43,0.45)', fontWeight: '600', textTransform: 'uppercase' }}>{selected.prof?.team_name || 'Independent'}</p>
+                  </div>
+                </div>
+                <p style={{ margin: 0, fontSize: '13px', color: '#53372b', fontWeight: '600' }}>
+                  {selected.task?.title || selected.card?.text || 'Submission'}
+                </p>
+                {selected.task?.points && (
+                  <p style={{ margin: '6px 0 0', fontSize: '13px', color: '#6f8e7c', fontWeight: '800' }}>+{selected.task.points} pts</p>
+                )}
+              </div>
+              <button onClick={() => setSelected(null)}
+                style={{ position: 'absolute', top: '12px', right: '12px', background: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', borderRadius: '50%', width: '28px', height: '28px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+              >
+                <X size={14} />
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+};
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [page, setPage] = useState('home');
@@ -2823,6 +3116,7 @@ export default function App() {
   const [selectedDay, setSelectedDay] = useState(1);
   const [fullTasks, setFullTasks] = useState([]); // All tasks for habit tracker
   const [userSubmissions, setUserSubmissions] = useState([]); // User's own subs
+  const [feedPosts, setFeedPosts] = useState([]);
   const [activeAlert, setActiveAlert] = useState(null);
   const [authError, setAuthError] = useState(null);
   const [isInitializing, setIsInitializing] = useState(true);
@@ -2831,6 +3125,7 @@ export default function App() {
   const [pendingUser, setPendingUser] = useState(null); // For registration
   const [urlBatchId, setUrlBatchId] = useState(null); // Batch ID from URL
   const alertTimerRef = useRef(null);
+  const uploadInProgressRef = useRef(false);
 
   // Capture Batch ID from URL (e.g. /TWATA)
   useEffect(() => {
@@ -2893,15 +3188,7 @@ export default function App() {
     return () => document.head.removeChild(styleEl);
   }, []);
 
-  // Polling Fallback
-  useEffect(() => {
-    if (!session) return;
-    fetchData(); // Initial fetch
-    const pollInterval = setInterval(() => {
-      fetchData();
-    }, 4000); // 4-second polling for steady sync
-    return () => clearInterval(pollInterval);
-  }, [session]);
+  // Polling removed — consolidated into the effect below to avoid triple-firing
 
   // Timer Tick (to update 'isNotYetLive' states every minute)
   const [tick, setTick] = useState(0);
@@ -2975,16 +3262,15 @@ export default function App() {
     return () => clearInterval(interval);
   }, [session?.user?.id]);
 
-  // Periodic Refresh for real-time sync (4 seconds)
+  // Periodic sync for alerts and challenge settings (separate from data polling)
   useEffect(() => {
     if (!session || !profile) return;
     const syncInterval = setInterval(() => {
-        fetchData();
         fetchCurrentAlert();
         if (profile.batch_id) fetchChallengeSettings(profile.batch_id);
-    }, 4000);
+    }, 8000);
     return () => clearInterval(syncInterval);
-  }, [session, profile, selectedDay]);
+  }, [session, profile]);
 
 
   // 3. Re-fetch data whenever profile or selectedDay changes
@@ -3217,6 +3503,7 @@ export default function App() {
   };
 
   const fetchData = async (isInitial = false) => {
+    if (uploadInProgressRef.current) return;
     if (!session?.user) return;
     if (isInitial) setIsLoading(true);
     try {
@@ -3364,6 +3651,27 @@ export default function App() {
       setTasks([...mergedTasks, ...flashcardTasks]);
       setFlashCards(safeFlashcards.filter(f => !interestedFlashcardIds.includes(f.rowKey)));
 
+      // Feed stories: approved + published + within 24h + same batch
+      const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000;
+      const storyItems = allSubs
+        .filter(s => {
+          if (s.status !== 'approved') return false;
+          if (!(s.published_to_feed === true || s.published_to_feed === 'true')) return false;
+          const pubTime = new Date(s.feed_published_at || s.processed_at || s.created_at);
+          return (Date.now() - pubTime.getTime()) < TWENTY_FOUR_HOURS;
+        })
+        .map(s => {
+          const sId = s.rowKey || s.RowKey || s.id;
+          const prof = allProfiles.find(p => (p.rowKey || p.RowKey || p.id) === s.user_id);
+          if (prof?.batch_id !== profile.batch_id) return null;
+          const task = allTasks.find(t => (t.rowKey || t.RowKey || t.id) === s.task_id);
+          const card = allFlashcards.find(c => (c.rowKey || c.RowKey || c.id) === s.flashcard_id);
+          return { ...s, id: sId, prof, task, card };
+        })
+        .filter(Boolean)
+        .sort((a, b) => new Date(b.feed_published_at || b.processed_at || b.created_at) - new Date(a.feed_published_at || a.processed_at || a.created_at));
+      setFeedPosts(storyItems);
+
       // 3. ENHANCED POINT CALCULATION (Live Sync - Filtered by Batch Start)
       const [allAwards] = await Promise.all([getAllEntities(TABLES.MANUAL_AWARDS)]);
       
@@ -3456,6 +3764,7 @@ export default function App() {
 
   const handleUploadAction = async (task, file) => {
     if (!session?.user) return;
+    uploadInProgressRef.current = true;
     try {
       let fUrl = null;
       if (file) {
@@ -3520,6 +3829,8 @@ export default function App() {
     } catch (e) {
       console.error('Submission sequence failed:', e);
       alert(`Submission Error: ${e.message}`);
+    } finally {
+      uploadInProgressRef.current = false;
     }
   };
 
@@ -3880,6 +4191,7 @@ export default function App() {
               onFlashcardAction={handleFlashcardAction}
               profile={profile}
               batch={allBatches.find(b => b.rowKey === profile?.batch_id || b.RowKey === profile?.batch_id)}
+              feedPosts={feedPosts}
             />
           )}
           {profile?.batch_id && page === 'board' && <BoardPage key="board" leaderboard={leaderboard} profile={profile} currentDay={currentDay} />}
@@ -3896,6 +4208,7 @@ export default function App() {
             />
           )}
           {profile?.batch_id && page === 'team' && <TeamPage key="team" profile={profile} leaderboard={leaderboard} clan={clan} />}
+          {profile?.batch_id && page === 'feed' && <FeedPage key="feed" profile={profile} />}
           {profile?.batch_id && page === 'captain-dashboard' && <CaptainDashboard key="captain" profile={profile} leaderboard={leaderboard} />}
           {profile?.batch_id && page === 'profile' && <ProfilePage key="profile" profile={profile} onUpdate={handleUpdateProfile} onLogout={handleLogout} onNavigate={setPage} />}
         </AnimatePresence>
