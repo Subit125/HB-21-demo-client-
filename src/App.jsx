@@ -88,6 +88,143 @@ const HEALTH_QUOTES = [
 
 // --- Components ---
 
+// ── UPGRADE 2: 3D Tilt Card HOC ──────────────────────────────────────────────
+const TiltCard = ({ children, style, className, maxTilt = 10, ...rest }) => {
+  const cardRef = useRef(null);
+
+  const handleMouseMove = useCallback((e) => {
+    const el = cardRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const dx = (e.clientX - cx) / (rect.width / 2);
+    const dy = (e.clientY - cy) / (rect.height / 2);
+    el.style.transform = `perspective(900px) rotateY(${dx * maxTilt}deg) rotateX(${-dy * maxTilt}deg) translateZ(4px)`;
+    el.style.transition = 'transform 0.1s ease';
+  }, [maxTilt]);
+
+  const handleMouseLeave = useCallback(() => {
+    const el = cardRef.current;
+    if (!el) return;
+    el.style.transform = 'perspective(900px) rotateY(0deg) rotateX(0deg) translateZ(0px)';
+    el.style.transition = 'transform 0.5s cubic-bezier(0.34, 1.56, 0.64, 1)';
+  }, []);
+
+  return (
+    <div
+      ref={cardRef}
+      className={className}
+      style={{ ...style, transformStyle: 'preserve-3d', willChange: 'transform' }}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={handleMouseLeave}
+      {...rest}
+    >
+      {children}
+    </div>
+  );
+};
+
+// ── UPGRADE 4: 3D SVG Progress Ring ──────────────────────────────────────────
+const ProgressRing = ({ current, total = 21, size = 160, strokeWidth = 12 }) => {
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const progress = Math.min(current / total, 1);
+  const offset = circumference * (1 - progress);
+  const uid = `ring-${current}-${total}`;
+
+  return (
+    <div className="progress-ring-container" style={{ width: size, height: size }}>
+      <svg className="progress-ring-svg" width={size} height={size}>
+        <defs>
+          <linearGradient id={uid} x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stopColor="#c99d5d" />
+            <stop offset="50%" stopColor="#9f4022" />
+            <stop offset="100%" stopColor="#d27440" />
+          </linearGradient>
+          <filter id="glow">
+            <feGaussianBlur stdDeviation="3" result="coloredBlur" />
+            <feMerge>
+              <feMergeNode in="coloredBlur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+        <circle
+          className="progress-ring-bg"
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          strokeWidth={strokeWidth}
+        />
+        <circle
+          className="progress-ring-fill"
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          strokeWidth={strokeWidth}
+          stroke={`url(#${uid})`}
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          filter="url(#glow)"
+        />
+      </svg>
+      <div className="progress-ring-label">
+        <div style={{ fontSize: '32px', fontWeight: '900', color: 'var(--text-primary)', lineHeight: 1, fontFamily: 'var(--font-heading)' }}>{current}</div>
+        <div style={{ fontSize: '10px', fontWeight: '800', color: 'var(--accent)', textTransform: 'uppercase', letterSpacing: '0.1em', opacity: 0.8 }}>of {total}</div>
+      </div>
+    </div>
+  );
+};
+
+// ── UPGRADE 7: 3D Leaderboard Podium ─────────────────────────────────────────
+const Podium3D = ({ data = [], profile }) => {
+  if (data.length < 1) return null;
+  // Podium order: 2nd, 1st, 3rd
+  const top3 = data.slice(0, 3);
+  const order = [top3[1], top3[0], top3[2]].filter(Boolean);
+  const metalColors = [
+    'linear-gradient(135deg, #aaa 0%, #C0C0C0 50%, #888 100%)',  // silver (2nd)
+    'linear-gradient(135deg, #c99d5d 0%, #FFD700 50%, #B8860B 100%)', // gold (1st)
+    'linear-gradient(135deg, #b5783a 0%, #CD7F32 50%, #8B4513 100%)', // bronze (3rd)
+  ];
+  const blockClass = ['silver', 'gold', 'bronze'];
+  const rankNums = [2, 1, 3];
+  const medals = ['🥈', '🥇', '🥉'];
+
+  return (
+    <div className="podium-container">
+      {order.map((item, i) => {
+        if (!item) return null;
+        const isMe = item.id === profile?.id;
+        return (
+          <div key={item.id || i} className="podium-slot">
+            {rankNums[i] === 1 && <div className="podium-crown" style={{ position: 'relative' }}>👑</div>}
+            <div
+              className="podium-avatar"
+              style={{
+                background: metalColors[i],
+                backgroundImage: item.avatar_url ? `url(${item.avatar_url})` : metalColors[i],
+                backgroundSize: 'cover',
+                backgroundPosition: 'center',
+                outline: isMe ? '3px solid var(--accent)' : 'none',
+                outlineOffset: '2px',
+              }}
+            >
+              {!item.avatar_url && (item.name?.[0] || '?').toUpperCase()}
+            </div>
+            <div className="podium-name" title={item.name}>{item.name?.split(' ')[0] || 'Unknown'}</div>
+            <div className="podium-pts">{item.points?.toLocaleString() || 0}</div>
+            <div className={`podium-block ${blockClass[i]}`}>
+              {medals[i]}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 const SkeletonTask = () => (
   <div className="skeleton-card" style={{
     padding: '24px',
@@ -500,7 +637,7 @@ const TaskCard = ({ task, onAction, isLocked, isHistory, minimal = false, schedu
                 <>
                   {(task.proof_mode === 'capture' || task.proof_mode === 'both' || !task.proof_mode) && (
                     <button
-                      className="status-badge"
+                      className="status-badge btn-spring"
                       style={{ ...statusBadgeStyle, width: '100%', backgroundColor: '#53372b', color: 'white', border: 'none', cursor: 'pointer' }}
                       onClick={() => {
                         console.log('Take Photo clicked. Detecting device...');
@@ -521,7 +658,7 @@ const TaskCard = ({ task, onAction, isLocked, isHistory, minimal = false, schedu
                   )}
                   {(task.proof_mode === 'upload' || task.proof_mode === 'both' || !task.proof_mode) && (
                     <button
-                      className="status-badge"
+                      className="status-badge btn-spring"
                       style={{ ...statusBadgeStyle, width: '100%', backgroundColor: 'white', color: '#53372b', border: '1px solid #53372b', cursor: 'pointer' }}
                       onClick={() => {
                         console.log('Upload from Gallery clicked');
@@ -553,7 +690,7 @@ const TaskCard = ({ task, onAction, isLocked, isHistory, minimal = false, schedu
   };
 
   return (
-    <div className="card" style={{ padding: '0', overflow: 'hidden', position: 'relative' }}>
+    <div className="card feed-card-depth" style={{ padding: '0', overflow: 'hidden', position: 'relative' }}>
       {/* In-Browser Camera Modal - works on both mobile & desktop */}
       {showCamera && (
         <div style={{
@@ -789,7 +926,7 @@ const WildcardCard = ({ card, onAction }) => {
     <motion.div
       initial={{ opacity: 0, scale: 0.98 }}
       animate={{ opacity: 1, scale: 1 }}
-      className="card"
+      className="card feed-card-depth"
       style={{ padding: '0', overflow: 'hidden', borderLeft: '4px solid var(--accent)' }}
     >
       {videoUrl ? (
@@ -969,15 +1106,17 @@ const HomePage = ({ tasks = [], flashCards = [], currentDay, selectedDay, onSele
                     style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', cursor: 'pointer', userSelect: 'none', WebkitTapHighlightColor: 'transparent' }}
                   >
                     <div style={{ position: 'relative' }}>
-                      <div style={{
-                        width: '62px', height: '62px', borderRadius: '50%', flexShrink: 0,
-                        background: featured
-                          ? 'linear-gradient(135deg, #FFD700 0%, #FFA500 60%, #FFD700 100%)'
-                          : seen
-                            ? 'rgba(83,55,43,0.15)'
-                            : 'linear-gradient(135deg, #9f4022 0%, #c99d5d 60%, #d27440 100%)',
-                        padding: '2.5px'
-                      }}>
+                      <div
+                        className={featured ? 'story-ring-featured' : !seen ? 'story-ring-glow' : ''}
+                        style={{
+                          width: '62px', height: '62px', borderRadius: '50%', flexShrink: 0,
+                          background: featured
+                            ? 'linear-gradient(135deg, #FFD700 0%, #FFA500 60%, #FFD700 100%)'
+                            : seen
+                              ? 'rgba(83,55,43,0.15)'
+                              : 'linear-gradient(135deg, #9f4022 0%, #c99d5d 60%, #d27440 100%)',
+                          padding: '2.5px'
+                        }}>
                         <div style={{ width: '100%', height: '100%', borderRadius: '50%', border: '2.5px solid #fcfaf5', overflow: 'hidden', background: '#f0ebe3' }}>
                           {post.file_url && !isVideoUrl(post.file_url) ? (
                             <img src={post.file_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -1010,24 +1149,26 @@ const HomePage = ({ tasks = [], flashCards = [], currentDay, selectedDay, onSele
       {createPortal(
         <AnimatePresence>
           {storyPost && (
-            <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 9500, background: '#000', display: 'flex', justifyContent: 'center', overflow: 'hidden' }}>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              style={{
-                position: 'relative',
-                width: '100%',
-                height: '100%',
-                maxWidth: '430px',
-                overflow: 'hidden',
-                background: '#000',
-              }}
-              onMouseDown={() => setStoryPaused(true)}
-              onMouseUp={() => setStoryPaused(false)}
-              onTouchStart={() => setStoryPaused(true)}
-              onTouchEnd={() => setStoryPaused(false)}
-            >
+            <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 9500, background: '#000', display: 'flex', justifyContent: 'center', overflow: 'hidden', perspective: '900px' }}>
+      <motion.div
+        key={storyPost?.id}
+        initial={{ opacity: 0, rotateY: 25, scale: 0.97 }}
+        animate={{ opacity: 1, rotateY: 0, scale: 1 }}
+        exit={{ opacity: 0, rotateY: -25, scale: 0.97 }}
+        transition={{ duration: 0.28, ease: [0.25, 0.46, 0.45, 0.94] }}
+        style={{
+          position: 'relative',
+          width: '100%',
+          height: '100%',
+          maxWidth: '430px',
+          background: '#000',
+          transformStyle: 'preserve-3d',
+        }}
+        onMouseDown={() => setStoryPaused(true)}
+        onMouseUp={() => setStoryPaused(false)}
+        onTouchStart={() => setStoryPaused(true)}
+        onTouchEnd={() => setStoryPaused(false)}
+      >
               {/* Media — fills full screen */}
               <div style={{ position: 'absolute', inset: 0 }}>
                 {storyPost.file_url ? (
@@ -1159,11 +1300,12 @@ const HomePage = ({ tasks = [], flashCards = [], currentDay, selectedDay, onSele
         document.body
       )}
 
-      {/* Header Section */}
-      <div style={{ textAlign: 'center', marginBottom: '40px' }}>
-        <h2 style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '2px', color: 'var(--accent)', fontWeight: '800', marginBottom: '8px' }}>Week {weekNum} — {weekTitles[weekNum - 1]}</h2>
-        <h1 style={{ fontFamily: 'var(--font-heading)', fontStyle: 'italic', color: 'var(--text-primary)', margin: '0' }}>Day {selectedDay} of 21</h1>
-        <p style={{ fontSize: '12px', color: 'var(--accent)', marginTop: '4px', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+      {/* Header Section — with 3D Progress Ring */}
+      <div style={{ textAlign: 'center', marginBottom: '40px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '16px' }}>
+        <h2 style={{ fontSize: '11px', textTransform: 'uppercase', letterSpacing: '2px', color: 'var(--accent)', fontWeight: '800', marginBottom: '0' }}>Week {weekNum} — {weekTitles[weekNum - 1]}</h2>
+        {/* UPGRADE 4: 3D Progress Ring replaces flat "Day X of 21" */}
+        <ProgressRing current={selectedDay} total={21} size={160} strokeWidth={13} />
+        <p style={{ fontSize: '12px', color: 'var(--accent)', marginTop: '0', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
           {(() => {
             const now = new Date();
             const targetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (currentDay - selectedDay));
@@ -1587,6 +1729,11 @@ const BoardPage = ({ leaderboard = [], profile, currentDay }) => {
         )}
       </AnimatePresence>
 
+    {/* UPGRADE 7: 3D Podium for top 3 */}
+      {displayData.length >= 3 && category === 'Individual' && (
+        <Podium3D data={displayData} profile={profile} />
+      )}
+
       {/* Standings Header with Sync */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', padding: '0 8px' }}>
         <h3 style={{ margin: 0, fontSize: '11px', color: 'rgba(83, 55, 43, 0.4)', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
@@ -1620,23 +1767,38 @@ const BoardPage = ({ leaderboard = [], profile, currentDay }) => {
           const rank = idx + 1;
           const isMe = item.type === 'user' && item.id === profile?.id;
           const key = item.type === 'user' ? item.id : `team-${item.name}`;
+          // Top 3 already shown in podium on Individual; show all in Teams tab
+          const isPodiumItem = category === 'Individual' && rank <= 3;
 
           return (
-            <motion.div
+            <TiltCard
               key={key}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: idx * 0.05 }}
+              maxTilt={7}
               style={{
-                background: 'white',
+                background: isMe
+                  ? 'rgba(253, 243, 239, 0.92)'
+                  : isPodiumItem
+                    ? 'rgba(255, 255, 255, 0.92)'
+                    : 'rgba(255, 255, 255, 0.80)',
+                backdropFilter: 'blur(14px)',
+                WebkitBackdropFilter: 'blur(14px)',
                 borderRadius: '32px',
-                padding: '24px 32px',
+                padding: '20px 28px',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '20px',
-                boxShadow: isMe ? '0 15px 35px rgba(159, 64, 34, 0.08)' : '0 10px 25px rgba(0,0,0,0.02)',
-                border: isMe ? '1px solid rgba(159, 64, 34, 0.1)' : '1px solid transparent',
-                position: 'relative'
+                boxShadow: isMe
+                  ? '0 15px 35px rgba(159, 64, 34, 0.12), inset 0 1px 0 rgba(255,255,255,0.8)'
+                  : isPodiumItem
+                    ? '0 10px 30px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.7)'
+                    : '0 4px 15px rgba(0,0,0,0.04), inset 0 1px 0 rgba(255,255,255,0.6)',
+                border: isMe
+                  ? '1px solid rgba(159, 64, 34, 0.15)'
+                  : isPodiumItem
+                    ? '1px solid rgba(255,255,255,0.6)'
+                    : '1px solid rgba(255,255,255,0.4)',
+                position: 'relative',
+                cursor: 'default',
               }}
             >
               {/* Rank */}
@@ -1695,7 +1857,7 @@ const BoardPage = ({ leaderboard = [], profile, currentDay }) => {
                   PTS
                 </div>
               </div>
-            </motion.div>
+            </TiltCard>
           );
         }) : (
           <div style={{ textAlign: 'center', padding: '60px', opacity: 0.3, fontStyle: 'italic' }}>
