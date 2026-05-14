@@ -274,6 +274,7 @@ const TaskCard = ({ task, onAction, isLocked, isHistory, minimal = false, schedu
   const [localFile, setLocalFile] = useState(null);
   const [localPreview, setLocalPreview] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [consentToFeed, setConsentToFeed] = useState(false);
   const [currentQuote, setCurrentQuote] = useState("");
   const [showCamera, setShowCamera] = useState(false);
   const [cameraStream, setCameraStream] = useState(null);
@@ -301,13 +302,14 @@ const TaskCard = ({ task, onAction, isLocked, isHistory, minimal = false, schedu
     setCurrentQuote(HEALTH_QUOTES[Math.floor(Math.random() * HEALTH_QUOTES.length)]);
     setIsUploading(true);
     try {
-      await onAction(task, localFile);
+      await onAction(task, localFile, consentToFeed);
     } catch (err) {
       console.error(err);
     }
     setIsUploading(false);
     setLocalFile(null);
     setLocalPreview(null);
+    setConsentToFeed(false);
   };
 
   const startCamera = async (mode = facingMode) => {
@@ -428,8 +430,17 @@ const TaskCard = ({ task, onAction, isLocked, isHistory, minimal = false, schedu
           <div style={{ position: 'relative', width: '100%', height: '160px', borderRadius: '12px', overflow: 'hidden', border: '1px solid #eee' }}>
             <img src={localPreview} style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="Preview" />
           </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', background: 'rgba(159,64,34,0.04)', borderRadius: '10px', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={consentToFeed}
+              onChange={(e) => setConsentToFeed(e.target.checked)}
+              style={{ width: '16px', height: '16px', accentColor: '#9f4022', cursor: 'pointer', flexShrink: 0 }}
+            />
+            <span style={{ fontSize: '12px', fontWeight: '600', color: '#53372b' }}>Share this to the batch feed</span>
+          </label>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={() => { setLocalFile(null); setLocalPreview(null); }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: '1px solid #eee', background: 'white', fontWeight: 'bold' }}>Cancel</button>
+            <button onClick={() => { setLocalFile(null); setLocalPreview(null); setConsentToFeed(false); }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: '1px solid #eee', background: 'white', fontWeight: 'bold' }}>Cancel</button>
             <button onClick={handleConfirm} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: 'none', background: '#9f4022', color: 'white', fontWeight: 'bold' }}>Confirm</button>
           </div>
         </div>
@@ -2710,8 +2721,8 @@ const HabitTrackerPage = ({ profile, currentDay, onUpload, batch, allTasks = [],
                 <TaskCard
                   task={selectedProtocol}
                   minimal={true}
-                  onAction={(task, file) => {
-                    onUpload(task, file);
+                  onAction={(task, file, consent) => {
+                    onUpload(task, file, consent);
                     setSelectedProtocol(null);
                   }}
                   isLocked={selectedProtocol.day > currentDay}
@@ -3762,7 +3773,7 @@ export default function App() {
     if (email) signOutGoogle(email);
   };
 
-  const handleUploadAction = async (task, file) => {
+  const handleUploadAction = async (task, file, consentToFeed = false) => {
     if (!session?.user) return;
     uploadInProgressRef.current = true;
     try {
@@ -3801,6 +3812,7 @@ export default function App() {
         user_id: session.user.id,
         status: task.proof_mode === 'checkbox' ? 'approved' : 'under-review',
         file_url: fUrl,
+        consent_to_feed: consentToFeed,
         updated_at: new Date().toISOString(),
         created_at: new Date().toISOString()
       };
