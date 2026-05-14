@@ -41,6 +41,10 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+html {
+  overflow-x: hidden;
+}
+
 body {
   font-family: var(--font-body);
   background-color: var(--bg-primary);
@@ -48,7 +52,6 @@ body {
   line-height: 1.5;
   display: flex;
   min-height: 100vh;
-  overflow-x: hidden;
 }
 
 #root {
@@ -1255,4 +1258,10 @@ h1, h2, h3 {
 
 .spin-anim {
   animation: spin 1s linear infinite;
+}
+
+@keyframes reactPop {
+  0% { transform: translateX(-50%) scale(1) translateY(0); opacity: 1; }
+  40% { transform: translateX(-50%) scale(2) translateY(-30px); opacity: 1; }
+  100% { transform: translateX(-50%) scale(1.5) translateY(-60px); opacity: 0; }
 }

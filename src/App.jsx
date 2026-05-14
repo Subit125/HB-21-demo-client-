@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import imageCompression from 'browser-image-compression';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -871,6 +872,12 @@ const HomePage = ({ tasks = [], flashCards = [], currentDay, selectedDay, onSele
   const weekTitles = ["Foundation", "Commitment", "Ascension", "Mastery"];
   const [storyIdx, setStoryIdx] = useState(null);
   const [storyPaused, setStoryPaused] = useState(false);
+  const [reactions, setReactions] = useState({});
+  const [viewedIds, setViewedIds] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(`ss_${profile?.id}`) || '[]')); }
+    catch { return new Set(); }
+  });
+  const [reactionAnim, setReactionAnim] = useState(null);
 
   const isHistory = selectedDay < currentDay;
   const isLocked = selectedDay > currentDay;
@@ -891,64 +898,161 @@ const HomePage = ({ tasks = [], flashCards = [], currentDay, selectedDay, onSele
     });
   };
 
+  useEffect(() => {
+    if (!feedPosts.length) return;
+    (async () => {
+      const allReac = await getAllEntities('StoryReactions').catch(() => []);
+      const map = {};
+      feedPosts.forEach(post => {
+        const pr = (allReac || []).filter(r => (r.partitionKey || r.PartitionKey) === post.id);
+        map[post.id] = {
+          fire: pr.filter(r => r.type === 'fire').length,
+          muscle: pr.filter(r => r.type === 'muscle').length,
+          mine: pr.find(r => (r.rowKey || r.RowKey) === profile?.id)?.type || null
+        };
+      });
+      setReactions(map);
+    })();
+  }, [feedPosts.length]);
+
+  const openStory = (idx) => {
+    setStoryIdx(idx);
+    const post = feedPosts[idx];
+    if (!post || !profile?.id || viewedIds.has(post.id)) return;
+    const next = new Set(viewedIds);
+    next.add(post.id);
+    setViewedIds(next);
+    try { localStorage.setItem(`ss_${profile.id}`, JSON.stringify([...next])); } catch {}
+    upsertEntity('StoryViews', { partitionKey: post.id, rowKey: profile.id, viewed_at: new Date().toISOString() }).catch(() => {});
+  };
+
+  const handleReact = async (subId, type) => {
+    const cur = reactions[subId] || { fire: 0, muscle: 0, mine: null };
+    const toggle = cur.mine === type;
+    setReactions(prev => ({
+      ...prev,
+      [subId]: {
+        fire: (cur.fire || 0) + (type === 'fire' ? (toggle ? -1 : 1) : 0),
+        muscle: (cur.muscle || 0) + (type === 'muscle' ? (toggle ? -1 : 1) : 0),
+        mine: toggle ? null : type
+      }
+    }));
+    if (!toggle) setReactionAnim({ type, key: Date.now() });
+    await upsertEntity('StoryReactions', { partitionKey: subId, rowKey: profile?.id, type: toggle ? null : type }).catch(() => {});
+  };
+
+  useEffect(() => {
+    const html = document.documentElement;
+    if (storyPost) {
+      html.style.overflow = 'hidden';
+    } else {
+      html.style.overflow = '';
+    }
+    return () => { html.style.overflow = ''; };
+  }, [storyPost]);
+
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="page-container">
 
       {/* Stories Strip */}
       {feedPosts.length > 0 && (
-        <div style={{ marginBottom: '32px' }}>
-          <div style={{ overflowX: 'auto', paddingBottom: '8px', scrollbarWidth: 'none' }}>
-            <div style={{ display: 'flex', gap: '18px', paddingBottom: '4px', width: 'max-content' }}>
-              {feedPosts.map((post, idx) => (
-                <div
-                  key={post.id}
-                  onClick={() => setStoryIdx(idx)}
-                  style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', userSelect: 'none' }}
-                >
-                  <div style={{
-                    width: '66px', height: '66px', borderRadius: '50%', flexShrink: 0,
-                    background: 'linear-gradient(135deg, #9f4022 0%, #c99d5d 60%, #d27440 100%)',
-                    padding: '2.5px'
-                  }}>
-                    <div style={{ width: '100%', height: '100%', borderRadius: '50%', border: '2.5px solid #fcfaf5', overflow: 'hidden', background: '#f0ebe3' }}>
-                      {post.file_url && !isVideoUrl(post.file_url) ? (
-                        <img src={post.file_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                      ) : (
-                        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '900', fontSize: '22px', color: '#9f4022' }}>
-                          {(post.prof?.name || '?')[0].toUpperCase()}
+        <div style={{ marginBottom: '28px', marginLeft: '-16px', marginRight: '-16px', paddingLeft: '16px' }}>
+          <div style={{ overflowX: 'auto', paddingBottom: '4px', scrollbarWidth: 'none', WebkitOverflowScrolling: 'touch' }}>
+            <div style={{ display: 'flex', gap: '16px', paddingRight: '16px', width: 'max-content' }}>
+              {feedPosts.map((post, idx) => {
+                const seen = viewedIds.has(post.id);
+                const featured = post.is_featured === true || post.is_featured === 'true';
+                return (
+                  <div
+                    key={post.id}
+                    onClick={() => openStory(idx)}
+                    style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', cursor: 'pointer', userSelect: 'none', WebkitTapHighlightColor: 'transparent' }}
+                  >
+                    <div style={{ position: 'relative' }}>
+                      <div style={{
+                        width: '62px', height: '62px', borderRadius: '50%', flexShrink: 0,
+                        background: featured
+                          ? 'linear-gradient(135deg, #FFD700 0%, #FFA500 60%, #FFD700 100%)'
+                          : seen
+                            ? 'rgba(83,55,43,0.15)'
+                            : 'linear-gradient(135deg, #9f4022 0%, #c99d5d 60%, #d27440 100%)',
+                        padding: '2.5px'
+                      }}>
+                        <div style={{ width: '100%', height: '100%', borderRadius: '50%', border: '2.5px solid #fcfaf5', overflow: 'hidden', background: '#f0ebe3' }}>
+                          {post.file_url && !isVideoUrl(post.file_url) ? (
+                            <img src={post.file_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          ) : (
+                            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: '900', fontSize: '20px', color: '#9f4022' }}>
+                              {(post.prof?.name || '?')[0].toUpperCase()}
+                            </div>
+                          )}
                         </div>
+                      </div>
+                      {featured && (
+                        <span style={{ position: 'absolute', bottom: '-2px', right: '-2px', fontSize: '14px', lineHeight: 1 }}>⭐</span>
+                      )}
+                      {!seen && !featured && (
+                        <span style={{ position: 'absolute', top: 0, right: 0, width: '13px', height: '13px', background: '#9f4022', borderRadius: '50%', border: '2px solid #fcfaf5' }} />
                       )}
                     </div>
+                    <span style={{ fontSize: '10px', color: seen ? 'rgba(83,55,43,0.4)' : '#53372b', fontWeight: '700', maxWidth: '62px', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {post.prof?.name?.split(' ')[0] || 'Member'}
+                    </span>
                   </div>
-                  <span style={{ fontSize: '10px', color: '#53372b', fontWeight: '700', maxWidth: '66px', textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {post.prof?.name?.split(' ')[0] || 'Member'}
-                  </span>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
       )}
 
       {/* Story Viewer */}
-      <AnimatePresence>
-        {storyPost && (
-          <div style={{ position: 'fixed', inset: 0, zIndex: 9500, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={() => setStoryIdx(null)}
-              style={{ position: 'absolute', inset: 0, background: 'rgba(15,10,8,0.96)', backdropFilter: 'blur(12px)' }}
-            />
-            <motion.div initial={{ scale: 0.94, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.94, opacity: 0 }}
-              style={{ position: 'relative', width: '100%', maxWidth: '380px', borderRadius: '20px', overflow: 'hidden', background: '#1a1009' }}
+      {createPortal(
+        <AnimatePresence>
+          {storyPost && (
+            <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', zIndex: 9500, background: '#000', display: 'flex', justifyContent: 'center', overflow: 'hidden' }}>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              style={{
+                position: 'relative',
+                width: '100%',
+                height: '100%',
+                maxWidth: '430px',
+                overflow: 'hidden',
+                background: '#000',
+              }}
               onMouseDown={() => setStoryPaused(true)}
               onMouseUp={() => setStoryPaused(false)}
               onTouchStart={() => setStoryPaused(true)}
               onTouchEnd={() => setStoryPaused(false)}
             >
+              {/* Media — fills full screen */}
+              <div style={{ position: 'absolute', inset: 0 }}>
+                {storyPost.file_url ? (
+                  isVideoUrl(storyPost.file_url)
+                    ? <video key={storyPost.id} src={storyPost.file_url} autoPlay playsInline muted={false} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    : <img key={storyPost.id} src={storyPost.file_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                ) : (
+                  <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a1009' }}>
+                    <div style={{ width: '100px', height: '100px', borderRadius: '50%', background: '#9f4022', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '40px', color: 'white', fontWeight: '900' }}>
+                      {(storyPost.prof?.name || '?')[0].toUpperCase()}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Top gradient */}
+              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '120px', background: 'linear-gradient(to bottom, rgba(0,0,0,0.6) 0%, transparent 100%)', zIndex: 5, pointerEvents: 'none' }} />
+
+              {/* Bottom gradient */}
+              <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '200px', background: 'linear-gradient(to top, rgba(0,0,0,0.85) 0%, transparent 100%)', zIndex: 5, pointerEvents: 'none' }} />
+
               {/* Progress bars */}
-              <div style={{ position: 'absolute', top: '14px', left: '12px', right: '12px', display: 'flex', gap: '4px', zIndex: 10 }}>
+              <div style={{ position: 'absolute', top: '52px', left: '12px', right: '12px', display: 'flex', gap: '4px', zIndex: 10 }}>
                 {feedPosts.map((_, i) => (
-                  <div key={i} style={{ flex: 1, height: '2.5px', borderRadius: '2px', background: 'rgba(255,255,255,0.28)', overflow: 'hidden' }}>
+                  <div key={i} style={{ flex: 1, height: '2px', borderRadius: '2px', background: 'rgba(255,255,255,0.35)', overflow: 'hidden' }}>
                     {i < storyIdx && (
                       <div style={{ width: '100%', height: '100%', background: 'white', borderRadius: '2px' }} />
                     )}
@@ -969,59 +1073,91 @@ const HomePage = ({ tasks = [], flashCards = [], currentDay, selectedDay, onSele
                 ))}
               </div>
 
-              {/* Media */}
-              <div style={{ minHeight: '480px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'black' }}>
-                {storyPost.file_url ? (
-                  isVideoUrl(storyPost.file_url)
-                    ? <video key={storyPost.id} src={storyPost.file_url} autoPlay style={{ maxWidth: '100%', maxHeight: '70vh', objectFit: 'contain' }} />
-                    : <img key={storyPost.id} src={storyPost.file_url} alt="" style={{ maxWidth: '100%', maxHeight: '70vh', objectFit: 'contain' }} />
-                ) : (
-                  <div style={{ width: '120px', height: '120px', borderRadius: '50%', background: '#9f4022', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '48px', color: 'white', fontWeight: '900' }}>
-                    {(storyPost.prof?.name || '?')[0].toUpperCase()}
+              {/* Day badge */}
+              {(storyPost.tasks?.day || storyPost.task?.day) && (
+                <div style={{ position: 'absolute', top: '72px', left: '14px', zIndex: 11, background: 'rgba(0,0,0,0.45)', backdropFilter: 'blur(8px)', borderRadius: '20px', padding: '4px 12px', display: 'flex', alignItems: 'center', gap: '5px', pointerEvents: 'none' }}>
+                  <span style={{ fontSize: '11px', fontWeight: '900', color: 'white', letterSpacing: '0.03em' }}>Day {storyPost.tasks?.day || storyPost.task?.day}</span>
+                  <span style={{ fontSize: '10px', color: '#c99d5d' }}>✓</span>
+                </div>
+              )}
+
+              {/* Reaction pop animation */}
+              {reactionAnim && (
+                <div key={reactionAnim.key} style={{ position: 'absolute', bottom: '200px', left: '50%', zIndex: 20, fontSize: '42px', animation: 'reactPop 0.8s ease-out forwards', pointerEvents: 'none' }}>
+                  {reactionAnim.type === 'fire' ? '🔥' : '💪'}
+                </div>
+              )}
+
+              {/* User info — bottom overlay */}
+              <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, padding: '20px 20px 36px', zIndex: 8 }}>
+                {storyPost.admin_shoutout && (
+                  <div style={{ marginBottom: '12px', background: 'rgba(159,64,34,0.35)', backdropFilter: 'blur(8px)', borderRadius: '10px', padding: '8px 14px', borderLeft: '3px solid #c99d5d' }}>
+                    <p style={{ margin: 0, fontSize: '12px', fontWeight: '700', color: '#FFE4B5', fontStyle: 'italic' }}>"{storyPost.admin_shoutout}"</p>
+                    <p style={{ margin: '3px 0 0 0', fontSize: '9px', fontWeight: '900', color: 'rgba(255,255,255,0.45)', textTransform: 'uppercase', letterSpacing: '0.12em' }}>Admin Shoutout</p>
                   </div>
                 )}
-              </div>
-
-              {/* User info bar */}
-              <div style={{ padding: '16px 20px', background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(8px)' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
-                  <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#9f4022', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: '900', fontSize: '14px', flexShrink: 0 }}>
-                    {(storyPost.prof?.name || '?')[0].toUpperCase()}
-                  </div>
-                  <div>
-                    <p style={{ margin: 0, fontSize: '13px', fontWeight: '800', color: 'white' }}>{storyPost.prof?.name}</p>
-                    <p style={{ margin: 0, fontSize: '10px', color: 'rgba(255,255,255,0.5)', fontWeight: '600', textTransform: 'uppercase' }}>
-                      {storyPost.prof?.team_name || 'Independent'} · {hoursLeft(storyPost)}h left
+                <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '12px' }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                      <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: (storyPost.is_featured === true || storyPost.is_featured === 'true') ? 'linear-gradient(135deg, #FFD700, #FFA500)' : '#9f4022', border: '2px solid rgba(255,255,255,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', fontWeight: '900', fontSize: '14px', flexShrink: 0 }}>
+                        {(storyPost.prof?.name || '?')[0].toUpperCase()}
+                      </div>
+                      <div>
+                        <p style={{ margin: 0, fontSize: '14px', fontWeight: '800', color: 'white', textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}>{storyPost.prof?.name}</p>
+                        <p style={{ margin: 0, fontSize: '11px', color: 'rgba(255,255,255,0.65)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                          {storyPost.prof?.team_name || 'Independent'} · {hoursLeft(storyPost)}h left
+                        </p>
+                      </div>
+                    </div>
+                    <p style={{ margin: 0, fontSize: '13px', color: 'rgba(255,255,255,0.85)', fontWeight: '600' }}>
+                      {storyPost.tasks?.title || storyPost.task?.title || storyPost.card?.text || 'Submission'}
+                      {(storyPost.tasks?.points || storyPost.task?.points) ? <span style={{ color: '#c99d5d', fontWeight: '800' }}> · +{storyPost.tasks?.points || storyPost.task?.points} pts</span> : ''}
                     </p>
                   </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flexShrink: 0 }}>
+                    {[{ type: 'fire', emoji: '🔥' }, { type: 'muscle', emoji: '💪' }].map(({ type, emoji }) => {
+                      const cur = reactions[storyPost.id] || { fire: 0, muscle: 0, mine: null };
+                      const count = cur[type] || 0;
+                      const active = cur.mine === type;
+                      return (
+                        <button
+                          key={type}
+                          onClick={(e) => { e.stopPropagation(); handleReact(storyPost.id, type); }}
+                          style={{ background: active ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.4)', backdropFilter: 'blur(8px)', border: `1.5px solid ${active ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.15)'}`, borderRadius: '20px', padding: '6px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', zIndex: 20, position: 'relative' }}
+                        >
+                          <span style={{ fontSize: '16px', lineHeight: 1 }}>{emoji}</span>
+                          {count > 0 && <span style={{ fontSize: '11px', fontWeight: '800', color: 'white' }}>{count}</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
-                <p style={{ margin: 0, fontSize: '12px', color: 'rgba(255,255,255,0.75)', fontWeight: '600' }}>
-                  {storyPost.task?.title || storyPost.card?.text || 'Submission'}
-                  {storyPost.task?.points ? ` · +${storyPost.task.points} pts` : ''}
-                </p>
               </div>
 
               {/* Prev tap zone */}
               <div
-                style={{ position: 'absolute', top: 0, left: 0, width: '35%', height: '85%', cursor: 'pointer', zIndex: 5 }}
+                style={{ position: 'absolute', top: 0, left: 0, width: '35%', height: '100%', cursor: 'pointer', zIndex: 6 }}
                 onClick={(e) => { e.stopPropagation(); setStoryIdx(i => Math.max(0, i - 1)); }}
               />
               {/* Next tap zone */}
               <div
-                style={{ position: 'absolute', top: 0, right: 0, width: '35%', height: '85%', cursor: 'pointer', zIndex: 5 }}
+                style={{ position: 'absolute', top: 0, right: 0, width: '35%', height: '100%', cursor: 'pointer', zIndex: 6 }}
                 onClick={(e) => { e.stopPropagation(); advanceStory(); }}
               />
 
               {/* Close */}
-              <button onClick={() => setStoryIdx(null)}
-                style={{ position: 'absolute', top: '14px', right: '14px', background: 'rgba(0,0,0,0.45)', border: 'none', color: 'white', borderRadius: '50%', width: '30px', height: '30px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 11 }}
+              <button
+                onClick={() => setStoryIdx(null)}
+                style={{ position: 'absolute', top: '14px', right: '14px', background: 'rgba(0,0,0,0.4)', border: 'none', color: 'white', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', zIndex: 11, backdropFilter: 'blur(4px)' }}
               >
-                <X size={14} />
+                <X size={15} />
               </button>
             </motion.div>
           </div>
-        )}
-      </AnimatePresence>
+          )}
+        </AnimatePresence>,
+        document.body
+      )}
 
       {/* Header Section */}
       <div style={{ textAlign: 'center', marginBottom: '40px' }}>
